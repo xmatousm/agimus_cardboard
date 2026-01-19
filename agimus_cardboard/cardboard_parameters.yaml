@@ -1,0 +1,32 @@
+---
+cardboard_params:
+  camera:
+    serial:
+      type: string
+      default_value: ""
+      description: "Serial number of the camera."
+    exposure_time:
+      type: double
+      default_value: 0.0
+      description: "Exposure time of the camera in seconds."
+    publish_raw:
+      type: bool
+      default_value: false
+      description: "Whether or not to publish raw images."
+    publish_plane:
+      type: bool
+      default_value: true
+      description: "Whether or not to publish plane-rectified images."
+    period:
+      type: double
+      default_value: 1.0
+      description: "Frame period."
+  detector:
+    publish_debug:
+      type: bool
+      default_value: false
+      description: "Whether or not to publish debug images."
+    publish_debug_reduce:
+      type: int
+      default_value: 1
+      description: "Reduce ratio of debug images."

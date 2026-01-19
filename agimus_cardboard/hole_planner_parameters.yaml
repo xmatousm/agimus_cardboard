@@ -1,0 +1,74 @@
+---
+hole_planner_params:
+  init_pose:
+    type: double_array
+    default_value: [0.0]
+    description: "Initial robot pose in cartesian coordinates"
+
+  delta_z:
+    type: double
+    default_value: 0.05
+    description: "Point above the hole to be made."
+
+  speed:
+    type: double
+    default_value: 0.05
+    description: "Cartesian speed in m/s."
+
+  speed_hole:
+    type: double
+    default_value: 0.05
+    description: "Cartesian speed in the hole."
+
+  ee_frame_name:
+    type: string
+    description: "End-effector name."
+    validation:
+      not_empty<>: []
+  w_q:
+    type: double_array
+    default_value: [1.0]
+    description: "Weights for joint configuration cost."
+  w_qdot:
+    type: double_array
+    default_value: [0.1]
+    description: "Weights for joint velocity cost."
+  w_qddot:
+    type: double_array
+    default_value: [0.0001]
+    description: "Weights for joint acceleration cost."
+  w_robot_effort:
+    type: double_array
+    default_value: [0.001]
+    description: "Weights for control cost."
+  w_pose:
+    type: double_array
+    default_value: [0.1]
+    description: "Weights for end-effector position cost."
+  w_pose_prepare:
+    type: double_array
+    default_value: [0.1]
+    description: "Weights for end-effector position cost."
+  w_pose_hole:
+    type: double_array
+    default_value: [0.1]
+    description: "Weights for end-effector position cost."
+
+  goal_tolerance:
+    type: double
+    default_value: 0.0
+    description: "Distance to goal tolerance."
+  goal_tolerance_boost:
+    type: double
+    default_value: 1.0
+    description: "Tolerance multiplier when approaching the goal."
+  goal_weight_boost:
+    type: double
+    default_value: 1.0
+    description: "Pose weight multiplier when approaching the goal."
+
+  goal_tolerance_prepare:
+    type: double
+    default_value: 0.0
+    description: "Distance to goal tolerance."
+
