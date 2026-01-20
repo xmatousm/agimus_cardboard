@@ -316,6 +316,7 @@ class Template:
 
     def check_holes(self, img, rot, t, opt, rng):
         lines = []
+        ids = []
         # TODO maybe bettere to compute area of dark pixels in hole and
         #  neighbourhood and compare to area of template hole
 
@@ -341,8 +342,9 @@ class Template:
 
             if df < opt.diff['thr']:
                 lines += [rot @ self.hole_line[i] + t]
+                ids += [i]
 
-        return lines
+        return lines, ids
 
 def im_fit_h(mat_h, w, h):
     """Update homography and image sizes."""

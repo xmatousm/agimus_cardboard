@@ -114,7 +114,6 @@ class Detector(Node):
         self.mask = None
         self.t0 = self.get_clock().now().nanoseconds / 1e9
         self.t = self.t0
-        self.hole_id = 0
 
     def image_callback(self, msg_in: MsgImage):
         assert not self.camera_embedded
@@ -168,50 +167,49 @@ class Detector(Node):
 
         t0 = time.time()
 
-        lines = []
+        hole_lines = []
+        msg_ids = []
+        msg_pose1 = []
+        msg_pose2 = []
+
+        marker = Marker()
+
+        marker.header.frame_id = 'lbr_link_0'  # TODO
+        marker.ns = "holes_needed"
+        marker.id = 0
+        marker.type = Marker.LINE_LIST
+        marker.action = Marker.ADD
+
+        marker.scale.x = 0.01
+        marker.scale.y = 0.01
+        marker.scale.z = 0.01
+
+        marker.color.r = 1.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+
+        marker.lifetime = DurationMsg(sec=2)
 
         if rot is not None:
             rng = np.percentile(self.img_u,
                                 [self.opt.diff['perc_min'],
                                  self.opt.diff['perc_max']])
-            lines = self.template.check_holes(
+            hole_lines, hole_ids = self.template.check_holes(
                 self.img_u, rot, trn, self.opt, rng)
 
             if self.robot_calib is not None:
                 robot_a = self.robot_calib['scale'] * self.robot_calib['rot']
                 robot_b = self.robot_calib['trn']
 
-                marker = Marker()
-
-                marker.header.frame_id = 'lbr_link_0'  # TODO
-                marker.ns = "holes_needed"
-                marker.id = 0
-                marker.type = Marker.LINE_LIST
-                marker.action = Marker.ADD
-
-                marker.scale.x = 0.01
-                marker.scale.y = 0.01
-                marker.scale.z = 0.01
-
-                marker.color.r = 1.0
-                marker.color.g = 1.0
-                marker.color.b = 0.0
-                marker.color.a = 1.0
-
-                marker.lifetime = DurationMsg(sec=2)
-
-                for u in lines:
-                    msg = HoleNeeded()
-                    self.hole_id += 1
-                    msg.id = self.hole_id
+                for i in range(len(hole_lines)):
+                    msg_ids += [hole_ids[i]]
+                    u = hole_lines[i]
 
                     x = robot_a @ gb.e2p(u) + robot_b
 
-                    msg.pose1 = [x[0, 0], x[1, 0], x[2, 0]]
-                    msg.pose2 = [x[0, 1], x[1, 1], x[2, 1]]
-                    msg.timestamp = self.timestamp.nanosec
-
-                    self._publisher.publish(msg)
+                    msg_pose1 += [x[0, 0], x[1, 0], x[2, 0]]
+                    msg_pose2 += [x[0, 1], x[1, 1], x[2, 1]]
 
                     p1 = Point(x=x[0, 0], y=x[1, 0], z=x[2, 0])
                     p2 = Point(x=x[0, 1], y=x[1, 1], z=x[2, 1])
@@ -219,8 +217,15 @@ class Detector(Node):
                     marker.points.append(p1)
                     marker.points.append(p2)
 
-                self._marker_publisher.publish(marker)
+        self._marker_publisher.publish(marker)
 
+        msg = HoleNeeded()
+        msg.id = msg_ids
+        msg.pose1 = msg_pose1
+        msg.pose2 = msg_pose2
+        msg.timestamp = self.timestamp.nanosec
+
+        self._publisher.publish(msg)
 
         if self.publish_debug:
             img_debug = cv2.cvtColor(self.img_u, cv2.COLOR_GRAY2RGB)
@@ -235,7 +240,7 @@ class Detector(Node):
 
                     cv2.line(img_debug, u1[:, 0], u2[:, 0], (255, 255, 0), 5)
 
-            for l in lines:
+            for l in hole_lines:
                 u = l.astype(int)
                 cv2.line(img_debug, u[:, 0], u[:, 1], (55, 255, 0), 5)
 

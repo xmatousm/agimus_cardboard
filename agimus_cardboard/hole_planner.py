@@ -1,5 +1,6 @@
 import numpy as np
 import rclpy
+from PyQt5.QtCore import flush
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -49,6 +50,9 @@ class HolePlanner(Node):
         )
 
         self.hole_needed = None
+        self.ids = []
+        self.p1s = []
+        self.p2s = []
 
         self.action_client = ActionClient(self, TrajectoryGoal,
                                           'trajectory_goal')
@@ -67,7 +71,7 @@ class HolePlanner(Node):
             return weights
 
     def hole_callback(self, msg_in: HoleNeeded):
-        self.hole_needed = [msg_in.pose1, msg_in.pose2]
+        self.hole_needed = [msg_in.id, msg_in.pose1, msg_in.pose2]
         self.get_logger().debug(f'Hole needed  {self.hole_needed}')
 
     def one_point(self, p, angle, speed, tol, w_pose):
@@ -133,44 +137,68 @@ class HolePlanner(Node):
         result = result_future.result().result
         self.get_logger().info(f'Result: {result}')
 
-    def read_hole_needed(self):
-        while self.hole_needed is None:
-            rclpy.spin_once(self)
+    def read_holes_needed(self, wait=True):
+        # always wait for a message; if required, wait for the nonempty hole
+        self.ids = []
+        while len(self.ids) == 0:
+            while self.hole_needed is None:
+                rclpy.spin_once(self)
 
-        p1 = self.hole_needed[0]
-        p2 = self.hole_needed[1]
-        self.hole_needed = None
+            self.ids, self.p1s, self.p2s = self.hole_needed
+            self.hole_needed = None
+
+            if not wait:
+                return
+
+    def select_hole(self, select_id):
+        inx = None
+        # select the proper hole or return None
+        for i in range(len(self.ids)):
+            if self.ids[i] == select_id:
+                inx = i
+                break
+
+        if inx is None: # proper hole not found
+            return None, None, None
+
+        p1 = [self.p1s[inx * 3], self.p1s[inx * 3 + 1], self.p1s[inx * 3 + 2]]
+        p2 = [self.p2s[inx * 3], self.p2s[inx * 3 + 1], self.p2s[inx * 3 + 2]]
+
         angle = np.arctan2(p1[1] - p2[1], p1[0] - p2[0])
+
+        if angle > np.pi / 2 or angle < -np.pi / 2:
+            p1, p2 = p2, p1
+            angle = np.arctan2(p1[1] - p2[1], p1[0] - p2[0])
 
         return p1, p2, angle
 
+    def process_one(self, select_id):
+        p1, p2, angle = self.select_hole(select_id)
 
-    def process(self):
-        self.get_logger().info("Processing")
+        if p1 is None:
+            self.get_logger().error(f'Hole {id} disappeared at the beginning.')
+            return
 
-        self.action_client.wait_for_server()
-
-        # move to initial pose
-        angle = 0.0
-        g = self.one_point(self.init_pose, angle, self.speed,
-                           self.goal_tolerance, self.w_pose)
-        self.send_point(g, 0, "out")
-
-        # move above the beginning of the hole
-        p1, p2, angle = self.read_hole_needed()
+        # move above the hole beginning
         p1[2] += self.delta_z
         g = self.one_point(p1, angle, self.speed,
                            self.goal_tolerance, self.w_pose)
         self.send_point(g, 1, "1")
 
-        # read/move againt to accept last changes
-        p1, p2, angle = self.read_hole_needed()
+        # read/move again to accept the last changes
+        self.read_holes_needed(wait=False)
+        p1, p2, angle = self.select_hole(select_id)
+
+        if p1 is None:
+            self.get_logger().error(f'Hole {id} disappeared during refinement.')
+            return
+
         p1[2] += self.delta_z
         g = self.one_point(p1, angle, self.speed,
                            self.goal_tolerance, self.w_pose)
         self.send_point(g, 2, "1a")
 
-        # increase weights and move down
+        # increase weights then move down
         g = self.one_point(p1, angle, self.speed,
                            self.goal_tolerance_prepare, self.w_pose_prepare)
         self.send_point(g, 3, "1+")
@@ -183,17 +211,35 @@ class HolePlanner(Node):
         g = self.one_point_saw(p2, angle, self.speed_hole, self.w_pose_hole)
         self.send_point(g, 5, "2D")
 
-        # move up, decrease wights
+        # move up, decrease weights
         p2[2] += self.delta_z
         g = self.one_point(p2, angle, self.speed,
-                           self.goal_tolerance_prepare, self.w_pose_prepare)
+                           self.goal_tolerance, self.w_pose_prepare)
         self.send_point(g, 6, "2+")
 
         g = self.one_point(p2, angle, self.speed,
                            self.goal_tolerance, self.w_pose)
         self.send_point(g, 7, "2")
 
-        self.get_logger().error("Done")
+    def process(self):
+        self.get_logger().info("Processing")
+
+        self.action_client.wait_for_server()
+
+        # move to the initial pose
+        g = self.one_point(self.init_pose, 0.0, self.speed,
+                           self.goal_tolerance, self.w_pose)
+        self.send_point(g, 0, "out")
+
+        self.hole_needed = None
+        self.read_holes_needed(wait=True)
+        assert len(self.ids) > 0
+
+        ids = self.ids
+        for current_id in ids:
+            self.process_one(current_id)
+
+        self.get_logger().info("Done")
 
 
 def main(args=None):
