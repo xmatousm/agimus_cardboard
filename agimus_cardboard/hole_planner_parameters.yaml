@@ -72,3 +72,29 @@ hole_planner_params:
     default_value: 0.0
     description: "Distance to goal tolerance."
 
+  x_min:
+    type: double
+    default_value: 0.0
+    description: "Minimum x-coordinate."
+
+  x_max:
+    type: double
+    default_value: 0.0
+    description: "Maximum x-coordinate."
+
+  y_min:
+    type: double
+    default_value: 0.0
+    description: "Minimum y-coordinate."
+
+  y_max:
+    type: double
+    default_value: 0.0
+    description: "Maximum y-coordinate."
+
+
+
+
+
+
+

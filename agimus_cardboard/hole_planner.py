@@ -41,6 +41,11 @@ class HolePlanner(Node):
         self.goal_weight_boost = self.params.goal_weight_boost
         self.goal_tolerance_prepare = self.params.goal_tolerance_prepare
 
+        self.x_min = self.params.x_min
+        self.x_max = self.params.x_max
+        self.y_min = self.params.y_min
+        self.y_max = self.params.y_max
+
         self.subscriber = self.create_subscription(
             HoleNeeded,
             "hole_needed",
@@ -147,8 +152,20 @@ class HolePlanner(Node):
             self.ids, self.p1s, self.p2s = self.hole_needed
             self.hole_needed = None
 
+            if not self.holes_in_range():
+                self.get_logger().error('Some hole not in range')
+                self.ids, self.p1s, self.p2s = [], [], []
+
             if not wait:
                 return
+
+    def holes_in_range(self) -> bool:
+        for i in range(len(self.ids)):
+            if not (self.x_min < self.p1s[i * 3] < self.x_max):
+                return False
+            if not (self.y_min < self.p1s[i * 3 + 1] < self.y_max):
+                return False
+        return True
 
     def select_hole(self, select_id):
         inx = None
@@ -158,7 +175,7 @@ class HolePlanner(Node):
                 inx = i
                 break
 
-        if inx is None: # proper hole not found
+        if inx is None:  # proper hole not found
             return None, None, None
 
         p1 = [self.p1s[inx * 3], self.p1s[inx * 3 + 1], self.p1s[inx * 3 + 2]]
@@ -176,7 +193,7 @@ class HolePlanner(Node):
         p1, p2, angle = self.select_hole(select_id)
 
         if p1 is None:
-            self.get_logger().error(f'Hole {id} disappeared at the beginning.')
+            self.get_logger().error(f'Hole {select_id} disappeared at the beginning.')
             return
 
         # move above the hole beginning
@@ -190,7 +207,7 @@ class HolePlanner(Node):
         p1, p2, angle = self.select_hole(select_id)
 
         if p1 is None:
-            self.get_logger().error(f'Hole {id} disappeared during refinement.')
+            self.get_logger().error(f'Hole {select_id} disappeared during refinement.')
             return
 
         p1[2] += self.delta_z
