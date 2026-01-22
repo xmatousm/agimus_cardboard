@@ -85,7 +85,7 @@ class HolePlanner(Node):
         self.hole_needed = [msg_in.id, msg_in.pose1, msg_in.pose2]
         self.get_logger().debug(f'Hole needed  {self.hole_needed}')
 
-    def one_point(self, p, angle, speed, tol, w_pose):
+    def one_point(self, p, angle, speed, tol, w_pose, duration=None):
         goal = TrajectoryGoal.Goal()
         g = goal.goal
         g.id = 0
@@ -97,7 +97,7 @@ class HolePlanner(Node):
         g.w_robot_effort = self.w_robot_effort
         g.rot_rpy = [0.0, 3.1415, angle]
         g.speed = speed
-        g.duration = -1.0
+        g.duration = -1.0 if duration is None else duration
         g.pose = [p[0], p[1], p[2]]
         g.w_pose = w_pose
         g.min_distance = tol
@@ -200,7 +200,7 @@ class HolePlanner(Node):
         return p1 + vec * self.saw_begin, p2 - vec * self.saw_end, angle
 
     def process_one(self, select_id):
-        p1, p2, angle = self.select_hole(select_id)
+        p1, p2, angle0 = self.select_hole(select_id)
 
         if p1 is None:
             self.get_logger().error(f'Hole {select_id} disappeared at the beginning.')
@@ -208,7 +208,7 @@ class HolePlanner(Node):
 
         # move above the hole beginning
         p1[2] += self.delta_z
-        g = self.one_point(p1, angle, self.speed,
+        g = self.one_point(p1, angle0, self.speed,
                            self.goal_tolerance, self.w_pose)
         self.send_point(g, 1, "1")
 
@@ -221,8 +221,11 @@ class HolePlanner(Node):
             return
 
         p1[2] += self.delta_z
+        rps = 0.5
+        duration = np.abs(angle - angle0) / 0.5
+
         g = self.one_point(p1, angle, self.speed,
-                           self.goal_tolerance, self.w_pose)
+                           self.goal_tolerance, self.w_pose, duration)
         self.send_point(g, 2, "1a")
 
         # increase weights then move down
