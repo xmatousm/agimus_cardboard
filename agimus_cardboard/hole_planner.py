@@ -41,6 +41,12 @@ class HolePlanner(Node):
         self.goal_weight_boost = self.params.goal_weight_boost
         self.goal_tolerance_prepare = self.params.goal_tolerance_prepare
 
+        self.saw_length = self.params.saw_length
+        self.saw_height = self.params.saw_height
+
+        self.saw_begin = self.params.saw_begin
+        self.saw_end = self.params.saw_end
+
         self.x_min = self.params.x_min
         self.x_max = self.params.x_max
         self.y_min = self.params.y_min
@@ -115,8 +121,8 @@ class HolePlanner(Node):
         g.duration = -1.0
         g.pose = [p[0], p[1], p[2]]
         g.w_pose = w_pose
-        g.s1 = 0.02
-        g.v1 = [0.0, 0.0, 0.02]
+        g.s1 = self.saw_length
+        g.v1 = [0.0, 0.0, self.saw_height]
 
         return goal
 
@@ -178,8 +184,8 @@ class HolePlanner(Node):
         if inx is None:  # proper hole not found
             return None, None, None
 
-        p1 = [self.p1s[inx * 3], self.p1s[inx * 3 + 1], self.p1s[inx * 3 + 2]]
-        p2 = [self.p2s[inx * 3], self.p2s[inx * 3 + 1], self.p2s[inx * 3 + 2]]
+        p1 = np.array(self.p1s[inx * 3:inx * 3 + 3])
+        p2 = np.array(self.p2s[inx * 3:inx * 3 + 3])
 
         angle = np.arctan2(p1[1] - p2[1], p1[0] - p2[0])
 
@@ -187,7 +193,11 @@ class HolePlanner(Node):
             p1, p2 = p2, p1
             angle = np.arctan2(p1[1] - p2[1], p1[0] - p2[0])
 
-        return p1, p2, angle
+        # beginning and ending shift
+        vec = p2 - p1
+        vec = vec / np.linalg.norm(vec)
+
+        return p1 + vec * self.saw_begin, p2 - vec * self.saw_end, angle
 
     def process_one(self, select_id):
         p1, p2, angle = self.select_hole(select_id)
@@ -226,6 +236,17 @@ class HolePlanner(Node):
 
         # saw in the hole
         g = self.one_point_saw(p2, angle, self.speed_hole, self.w_pose_hole)
+        self.send_point(g, 5, "2D")
+
+        # finishing point
+        p2[2] += self.saw_height
+        g = self.one_point(p2, angle, self.speed_hole,
+                           self.goal_tolerance_prepare, self.w_pose_hole)
+        self.send_point(g, 5, "2D")
+
+        p2[2] -= self.saw_height
+        g = self.one_point(p2, angle, self.speed_hole,
+                           self.goal_tolerance_prepare, self.w_pose_hole)
         self.send_point(g, 5, "2D")
 
         # move up, decrease weights

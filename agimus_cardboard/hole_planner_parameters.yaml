@@ -54,6 +54,26 @@ hole_planner_params:
     default_value: [0.1]
     description: "Weights for end-effector position cost."
 
+  saw_length:
+    type: double
+    default_value: 0.02
+    description: "Length of one saw tooth."
+
+  saw_height:
+    type: double
+    default_value: 0.02
+    description: "Height of one saw tooth."
+
+  saw_begin:
+    type: double
+    default_value: 0.0
+    description: "Beginning offset of saw line."
+
+  saw_end:
+    type: double
+    default_value: 0.0
+    description: "Ending offset of saw line."
+
   goal_tolerance:
     type: double
     default_value: 0.0
