@@ -33,6 +33,7 @@ class Camera(Node):
         self.publish_raw = self.params.camera.publish_raw
         self.publish_plane = self.params.camera.publish_plane
         self.period = self.params.camera.period
+        packet_size = self.params.camera.packet_size
 
         # calibration
         with open(calib_file, 'r') as fh:
@@ -86,12 +87,14 @@ class Camera(Node):
             assert exposure_us > 0
 
             self.cam = CameraBasler(serial_number=serial_number,
-                                    exposure_us=exposure_us)
+                                    exposure_us=exposure_us,
+                                    packet_size=packet_size,)
 
             self.get_logger().info(
                 "Camera initialized:\n" +
                 f"  serial={serial_number}\n" +
                 f"  exposure={exposure_us}\n" +
+                f"  packet_size={packet_size}\n" +
                 f"  raw={self.publish_raw}\n" +
                 f"  plane={self.publish_plane}")
 

@@ -21,6 +21,7 @@ class CameraBasler:
             # manual exposure in microseconds (negative keeps current)
             log_exposure_changes: bool = True,
             # control info logging when exposure changes
+            packet_size: int = 1500,
     ):
         self.device_index = device_index
         self.serial_number = serial_number
@@ -28,6 +29,7 @@ class CameraBasler:
         self.log_exposure_changes = log_exposure_changes
         self.camera = None
         self.converter = None
+        self.packet_size = packet_size
         logger.info("Connecting to Basler camera:")
         if self.serial_number is not None:
             logger.info(f"  serial number: {self.serial_number}")
@@ -76,8 +78,14 @@ class CameraBasler:
                 self.camera = pylon.InstantCamera(
                     factory.CreateDevice(selected))
                 info = self.camera.GetDeviceInfo()
+                self.camera.Open()
+                self.camera.GevSCPSPacketSize.SetValue(self.packet_size)
+
                 logger.info(
                     f"Connected to: {info.GetModelName()} ({info.GetSerialNumber()})")
+                logger.info(
+                    f"Packet size: {self.camera.GevSCPSPacketSize.GetValue()}")
+                self.camera.Close()
 
                 break
 
@@ -113,6 +121,7 @@ class CameraBasler:
                     self._connect_camera()
 
                 self.camera.Open()
+
 
                 node = self.camera.ExposureTimeRaw
                 exp_min = node.Min

@@ -9,6 +9,10 @@ cardboard_params:
       type: double
       default_value: 0.0
       description: "Exposure time of the camera in seconds."
+    packet_size:
+      type: int
+      default_value: 1500
+      description: "Transport packet size."
     publish_raw:
       type: bool
       default_value: false
