@@ -23,6 +23,7 @@ class Camera(Node):
         super().__init__(name)
 
         self.bridge = cv_bridge.CvBridge()
+        self.img = None
         # parameters
         self.param_listener = cardboard_params.ParamListener(self)
         self.params = self.param_listener.get_params()
@@ -88,7 +89,7 @@ class Camera(Node):
 
             self.cam = CameraBasler(serial_number=serial_number,
                                     exposure_us=exposure_us,
-                                    packet_size=packet_size,)
+                                    packet_size=packet_size)
 
             self.get_logger().info(
                 "Camera initialized:\n" +
@@ -107,6 +108,14 @@ class Camera(Node):
             self.img = self.simulated_image
         else:
             self.img = self.cam.capture_image()
+            failed = 0
+            while self.img is None:
+                failed += 1
+                self.get_logger().error(
+                    f"Image capture failed {failed} times, retrying.",
+                    throttle_duration_sec=0.3)
+                self.img = self.cam.capture_image()
+
         t1 = time.time() - t0
         t2 = 0.0
         t3 = 0.0
