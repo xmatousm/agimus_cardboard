@@ -142,7 +142,7 @@ class Detector(Node):
             self.mask = cv2.erode(self.mask, kernel, iterations=1)
 
         t = time.time()
-        seg, _, u = crb.detect_all_segments(self.img_u, self.opt, self.mask)
+        seg, img_e, u = crb.detect_all_segments(self.img_u, self.opt, self.mask)
         t1 = time.time() - t
 
         self.get_logger().debug(f"Detection: {len(seg)} segments [{t1:.2f} s]")
@@ -229,6 +229,8 @@ class Detector(Node):
 
         if self.publish_debug:
             img_debug = cv2.cvtColor(self.img_u, cv2.COLOR_GRAY2RGB)
+            blue = img_debug[:,:,2]
+            blue[img_e > 0] = 255
 
             for s in seg:
                 cv2.line(img_debug, s.u1[:, 0], s.u2[:, 0], (255, 0, 0), 15)
