@@ -1,6 +1,5 @@
 import numpy as np
 import rclpy
-from PyQt5.QtCore import flush
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -8,7 +7,9 @@ from agimus_cardboard.hole_planner_parameters import hole_planner_params
 
 from agimus_demos_msgs.msg import HoleNeeded
 from agimus_demos_msgs.action import TrajectoryGoal
-
+from visualization_msgs.msg import Marker
+from builtin_interfaces.msg import Duration as DurationMsg
+from geometry_msgs.msg import Point
 
 class HolePlanner(Node):
     """"""
@@ -58,6 +59,17 @@ class HolePlanner(Node):
             self.hole_callback,
             qos_profile=QoSProfile(depth=2,
                                    reliability=ReliabilityPolicy.RELIABLE),
+        )
+
+        # debug publisher for working area
+        self._marker_publisher = self.create_publisher(
+            Marker,
+            "working_area_marker",
+            qos_profile=QoSProfile(
+                depth=1,
+                reliability=ReliabilityPolicy.RELIABLE,
+                history=HistoryPolicy.KEEP_LAST,
+            ),
         )
 
         self.hole_needed = None
@@ -206,6 +218,8 @@ class HolePlanner(Node):
             self.get_logger().error(f'Hole {select_id} disappeared at the beginning.')
             return
 
+        self.publish_working_area(0.0, 1.0, 0.0)
+
         # move above the hole beginning
         p1[2] += self.delta_z
         g = self.one_point(p1, angle0, self.speed,
@@ -218,6 +232,7 @@ class HolePlanner(Node):
 
         if p1 is None:
             self.get_logger().error(f'Hole {select_id} disappeared during refinement.')
+            self.publish_working_area(1.0, 0.0, 0.0)
             return
 
         p1[2] += self.delta_z
@@ -262,9 +277,37 @@ class HolePlanner(Node):
                            self.goal_tolerance, self.w_pose)
         self.send_point(g, 7, "2")
 
+    def publish_working_area(self, r, g, b):
+        marker = Marker()
+
+        marker.header.frame_id = 'lbr_link_0'  # TODO
+        marker.ns = "working_area"
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+
+        marker.scale.x = 0.01
+
+        marker.color.r = r
+        marker.color.g = g
+        marker.color.b = b
+        marker.color.a = 1.0
+
+        marker.lifetime = DurationMsg(sec=2)
+        zw = 0.1 # TODO
+        marker.points.append(Point(x=self.x_min, y=self.y_min, z=zw))
+        marker.points.append(Point(x=self.x_min, y=self.y_max, z=zw))
+        marker.points.append(Point(x=self.x_max, y=self.y_max, z=zw))
+        marker.points.append(Point(x=self.x_max, y=self.y_min, z=zw))
+        marker.points.append(Point(x=self.x_min, y=self.y_min, z=zw))
+
+        self._marker_publisher.publish(marker)
+
     def process(self):
         self.get_logger().info("Processing")
 
+        # working area markers
+        self.publish_working_area(1.0, 0.0, 0.0)
         self.action_client.wait_for_server()
 
         # move to the initial pose
