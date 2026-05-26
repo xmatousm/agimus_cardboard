@@ -1,14 +1,16 @@
 from typing import Optional
 import argparse
 import rclpy
+from rclpy.impl.logging_severity import LoggingSeverity
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.node import Node
 from builtin_interfaces.msg import Duration as DurationMsg
 from sensor_msgs.msg import Image as MsgImage
 import agimus_cardboard.crbtools as crb
+import agimus_cardboard.draw as draw
 
 from agimus_cardboard.cardboard_parameters import cardboard_params
-from agimus_demos_msgs.msg import HoleNeeded
+from agimus_controller_mod_msgs.msg import HoleNeeded
 import yaml
 
 import cv2
@@ -17,20 +19,24 @@ import time
 import cv_bridge
 from agimus_cardboard.camera import Camera
 import geometry.basic as gb
-from visualization_msgs.msg import MarkerArray, Marker
+from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
+import matplotlib.pyplot as plt
+import matplotlib
 
+matplotlib.use('qtagg')
 
 class Detector(Node):
     """"""
 
     def __init__(self, template_file: str,
-                 calib_file: Optional[str] = None,
+                 calib_file: str,
                  robot_calib_file: Optional[str] = None,
-                 simulate_file: Optional[str] = None):
+                 simulate_file: Optional[str] = None,
+                 camera_embedded: bool = True):
         super().__init__("detector")
 
-        self.camera_embedded = calib_file is not None
+        self.camera_embedded = camera_embedded
 
         self.bridge = cv_bridge.CvBridge()
 
@@ -42,9 +48,32 @@ class Detector(Node):
         self.publish_debug_reduce = self.params.detector.publish_debug_reduce
 
         self.opt = crb.Opt()
+        self.is_debug = self.get_logger().is_enabled_for(LoggingSeverity.DEBUG)
 
         # template
-        self.template = crb.Template(template_file, self.opt)
+        plt.ion()
+        with open(calib_file, 'r') as fh:
+            calib_data = yaml.load(fh, Loader=yaml.SafeLoader)
+
+        calib = crb.Calib.from_dict(calib_data)
+        calib_u = calib.get_undistorted()
+
+        with open(template_file, 'r') as fh:
+            tmpl_dict = yaml.load(fh, Loader=yaml.SafeLoader)
+
+        tmpl_m = crb.TemplateMetric.from_dict(tmpl_dict)
+        tmpl = crb.Template.from_metric(calib_u, self.opt, tmpl_m)
+        self.template = tmpl
+
+        # draw template if in debug mode
+        if self.is_debug:
+            plt.figure(1)
+            draw.template_metric(tmpl_m, plt.gca())
+
+            plt.figure(2)
+            draw.template(tmpl, plt.gca())
+
+            plt.pause(0.01)
 
         # robot calibration
         self.robot_calib = None
@@ -127,10 +156,14 @@ class Detector(Node):
         self.image_process()
 
     def capture(self):
+        self.get_logger().debug(f"Capture")
+        t0 = time.time()
         assert self.camera_embedded
         self.camera_node.capture()
         self.timestamp = self.camera_node.timestamp
         self.img_u = self.camera_node.img_u
+        t1 = time.time() - t0
+        self.get_logger().debug(f"Capture done [{t1:.2f} s]")
 
     def image_process(self):
         self.get_logger().debug(f"Processing")
@@ -260,6 +293,18 @@ class Detector(Node):
 
         self.get_logger().debug(f"")
 
+        if self.is_debug:
+            plt.figure(3)
+            plt.clf()
+            plt.imshow(self.img_u, cmap='gray', vmin=0, vmax=255)
+            draw.segments(seg)
+            if rot is not None:
+                draw.segments(self.template.seg, rot=rot, t=trn, linewidth=2, color='w')
+
+            # redraw figures
+            plt.gcf().canvas.draw_idle()
+            plt.gcf().canvas.start_event_loop(0.01)
+
 
 def main(args=None):
     node = None
@@ -273,6 +318,7 @@ def main(args=None):
         parser.add_argument("--calib-file", type=str, required=True)
         parser.add_argument("--robot-calib-file", type=str, required=False)
         parser.add_argument("--simulate-file", type=str, required=False)
+        parser.add_argument("--camera-embedded", action="store_true")
         args = parser.parse_args(args[1:])  # skip the script name
 
         node = Detector(**vars(args))

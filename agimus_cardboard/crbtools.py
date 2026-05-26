@@ -9,7 +9,56 @@ import numpy as np
 
 import geometry.all as g
 from mathlib.optimize import ransac
-from mathlib.types import VectorI, ColVector3, RowVector, Matrix33
+from mathlib.types import VectorI, ColVector3, RowVector, Matrix33, Matrix, \
+    Matrix2N
+
+from agimus_cardboard import draw as draw
+
+
+def _req(data: dict[str, Any], *key: str, dtype: type = float):
+    """Check the presence and types of required keys."""
+
+    for k in key:
+        assert k in data, f"missing {k} in the dict"
+        assert type(data[k]) is dtype, \
+            f"type of {k} should be {dtype} not {type(data[k])}"
+
+
+def pixels_in_convex_polygon(u: Matrix2N):
+    """Create pixel list of pixels inside the given convex polygon.
+
+    The first and last vertex must be the same.
+    """
+
+    assert u.shape[1] > 3  # at least 3 vertices (the last is duplicate)
+    assert u.shape[0] == 2
+
+    # Bounding box of candidate pixels
+    xmin = int(np.floor(u[0].min()))
+    xmax = int(np.ceil(u[0].max()))
+    ymin = int(np.floor(u[1].min()))
+    ymax = int(np.ceil(u[1].max()))
+
+    # All integer pixel coordinates in bounding box
+    x, y = np.meshgrid(np.arange(xmin, xmax + 1), np.arange(ymin, ymax + 1))
+
+    pt = np.vstack((x.ravel(), y.ravel()))
+
+    # Edges
+    beg = u.T[:-1]
+    end = u.T[1:]
+    edge = end - beg
+
+    # Cross products for all points against all edges
+    # cross = E_x * (P_y - A_y) - E_y * (P_x - A_x)
+    cross = edge[:, [0]] * (pt[1] - beg[:, [1]]) - edge[:, [1]] * (
+                pt[0] - beg[:, [0]])
+
+    # Inside if all cross products have same sign
+    eps = 1e-12
+    inside = np.all(cross >= -eps, axis=0) | np.all(cross <= eps, axis=0)
+
+    return pt[:, inside]
 
 
 @dataclass()
@@ -50,6 +99,8 @@ class Opt:
         'log_prob': 4,
         'max_gap': 10,
         'min_length': 150,
+        # minimum length updated as a ratio of minimal template segment
+        'min_length_rel': 0.8,
         # maximum count of line segments
         'max_segments': 30,
     }
@@ -105,7 +156,7 @@ class LineSegment:
         self.l = g.u2l_norm(u1, u2)
 
         # nearest point transformation
-        # u_nearest = (I - n @ n.T ) @ u - n * d
+        # u_nearest = (I - n @ n.T) @ u - n * d
         self.pt_mat = np.eye(2) - self.l[:2] @ self.l[:2].T
         self.pt_vec = - self.l[:2] * self.l[2, 0]
 
@@ -129,6 +180,8 @@ class Calib():
         self.w: int = w
         self.h: int = h
         self.mat_h: Optional[Matrix33] = None  # homography to the object plane
+        self.mat_h0: Optional[
+            Matrix33] = None  # homography from the object plane to the z=0 plane
         self.w_h: Optional[int] = None  # width of the image after homography
         self.h_h: Optional[int] = None  # height of the image after homography
 
@@ -217,6 +270,9 @@ class Calib():
         mat_h = self.mat_k @ rot.T @ np.linalg.inv(self.mat_k)
         self.mat_h, self.w_h, self.h_h = im_fit_h(mat_h, self.w, self.h)
 
+        e12 = np.array([[1, 0], [0, 1], [0, 0]])
+        self.mat_h0 = np.linalg.inv(self.mat_k @ np.hstack((e12, self.t_vec)))
+
     def transform_image_to(self, calib_to: 'Calib', img):
         if calib_to.dist is not None:
             raise NotImplementedError()
@@ -243,6 +299,20 @@ class Calib():
 
         return g.p2e(dst).T
 
+    def transform_3d_points_to(self, x):
+        rot = g.a2r(self.r_vec.flatten())
+
+        x = rot @ x.T + self.t_vec
+
+        if self.dist is not None:
+            raise NotImplementedError()
+
+        u = self.mat_k @ x
+        if self.mat_h is not None:
+            u = self.mat_h @ u
+
+        return g.p2e(u).T
+
     def get_undistorted(self) -> 'Calib':
         mat_k, roi = cv2.getOptimalNewCameraMatrix(
             self.mat_k, self.dist, (self.w, self.h), 1, (self.w, self.h))
@@ -254,37 +324,161 @@ class Calib():
         return calib
 
 
-class Template:
-    def __init__(self, image_file: str, opt: Opt) -> None:
-        # load a template bitmap
-        img = cv2.imread(image_file)
-        self.img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+class TemplateMetric:
+    """Cardboard template defined in metric (world) coordinates."""
 
-        # extract coordinates of the template holes segmented based on intensity
+    def __init__(self) -> None:
+        self.hole_line = []
+        self.seg = []
+        self.hole_shape = []
+        self.hole_size = []
+
+    def hole_polygon(self, i: int) -> tuple[Matrix, Matrix]:
+        """Convex polygon surrounding a single hole area."""
+
+        assert 0 <= i < len(self.hole_line), "invalid hole index"
+
+        h = self.hole_line[i]
+
+        if self.hole_shape[i] == 'line':
+            h1 = h[:, [0]]
+            h2 = h[:, [1]]
+            # orthogonal vector with half of the width length
+            n = np.array([[h[1, 0] - h[1, 1]], [h[0, 1] - h[0, 0]]])
+            n /= np.linalg.norm(n)
+            n *= self.hole_size[i] / 2
+
+            hole = np.hstack((h1 - n, h1 + n, h2 + n, h2 - n, h1 - n))
+            hole_ngh = np.hstack(
+                (h1 - 2 * n, h1 + 2 * n, h2 + 2 * n, h2 - 2 * n, h1 - 2 * n))
+
+            return hole, hole_ngh
+
+        if self.hole_shape[i] == 'circle':
+            center = (h[:, [0]] + h[:, [1]]) / 2
+            radius = self.hole_size[i] / 2
+            alpha = np.linspace(0.0, 2 * np.pi, 36)
+            u = np.vstack((np.cos(alpha), np.sin(alpha)))
+            hole = center + u * radius
+            hole_ngh = center + 2 * u * radius
+
+            return hole, hole_ngh
+
+        raise ValueError(f'Wrong hole shape: {self.hole_shape[i]}')
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the metric template to a dict."""
+
+        data = {'seg': [], 'hole': []}
+        for s in self.seg:
+            u = [float(x) for x in s.flatten()]
+            data['seg'] += [u]
+
+        for s in self.hole_line:
+            up = [float(x) for x in s.flatten()]
+            data['hole'] += [up]
+
+        print('Add hole_shape and hole_size manually.')
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> 'TemplateMetric':
+        """Deserialize a new metric template from a dict."""
+
+        tmpl = cls()
+
+        _req(data, 'seg', dtype=list)
+
+        for s in data['seg']:
+            u = np.array(s).reshape((2, -1))
+            tmpl.seg += [u]
+
+        _req(data, 'hole', dtype=list)
+        _req(data, 'hole_shape', dtype=list)
+        _req(data, 'hole_size', dtype=list)
+
+        for i in range(len(data['hole'])):
+            u = np.array(data['hole'][i]).reshape((2, -1))
+            tmpl.hole_line += [u]
+            tmpl.hole_shape += [data['hole_shape'][i]]
+            tmpl.hole_size += [data['hole_size'][i]]
+
+        return tmpl
+
+
+class Template:
+    def __init__(self, opt: Opt, seg: list[LineSegment | Matrix]) -> None:
         self.hole_pt = []
         self.nb_hole_pt = []
         self.hole_line = []
+        self.hole_polygon = []
 
+        # template segments and pairs
+
+        self.seg: list[LineSegment] = []
+        for s in seg:
+            if isinstance(s, LineSegment):
+                ls = LineSegment(u1=s.u1, u2=s.u2)
+            else:
+                ls = LineSegment(u1=s[:, [0]], u2=s[:, [-1]])
+            self.seg.append(ls)
+
+        self.pairs = segment_pairs(self.seg, opt)
+
+        assert len(self.seg) > 0
+
+        # find bounding box of all line segments
+        u_all = np.hstack([np.hstack((s.u1, s.u2)) for s in self.seg])
+        bb_max = u_all.max(axis=1).astype(int)
+        self.img_shape = [bb_max[1], bb_max[0]]
+
+    def min_segment_len(self) -> int:
+        assert len(self.seg) > 0
+
+        l = [np.linalg.norm(s.u1 - s.u2) for s in self.seg]
+        return int(min(l))
+
+    @classmethod
+    def from_image(cls, img: Matrix, opt: Opt) -> "Template":
+        """Build a template from an image with intensity-encoded holes."""
+
+        assert img.ndim == 2
+        assert img.dtype == np.uint8
+
+        # template without holes (all pixels with intensity > 10 belongs
+        # to the template
+        img_fill = img.copy()
+        img_fill[img > 10] = 255
+
+        # template segments
+        seg = detect_all_segments(img_fill, opt)[0]
+        tmpl = cls(opt, seg=seg)
+
+        # coordinates of the template holes segmented based on intensity
+        # (holes are in intensity ranges 20-29, 30-39, etc., where the pixel
+        # with minimal value marks the start, and the pixel with maximal value
+        # mark the end
         nb_kernel = np.ones((opt.template['neigh'], opt.template['neigh']),
                             np.uint8)
 
         step = 10
         for i in range(20, 240, step):
-            sel = (self.img >= i) * (self.img < (i + step))
+            sel = (img >= i) * (img < (i + step))
             x = np.nonzero(sel)
             if len(x[0]) > 0:
-                self.hole_pt.append(np.vstack((x[1], x[0])))
+                # self.hole_pt.append(np.vstack((x[1], x[0])))
 
-                # line points
-                v1 = self.img[sel].min()
-                v2 = self.img[sel].max()
+                # line points - pixel with minimum and maximum value
+                # in current intensity range
+                v1 = img[sel].min()
+                v2 = img[sel].max()
 
-                x1 = np.nonzero(self.img == v1)
-                x2 = np.nonzero(self.img == v2)
+                x1 = np.nonzero(img == v1)
+                x2 = np.nonzero(img == v2)
 
                 line = np.array([[x1[1][0], x2[1][0]],
-                                           [x1[0][0], x2[0][0]]])
-                self.hole_line.append(line)
+                                 [x1[0][0], x2[0][0]]])
+                tmpl.hole_line.append(line)
 
                 # neighbourhood
                 sel1 = cv2.dilate(sel.astype(np.uint8), nb_kernel)
@@ -293,14 +487,54 @@ class Template:
                 sel1 = sel1 * np.bitwise_not(sel)
                 x = np.nonzero(sel1)
 
-                self.nb_hole_pt.append(np.vstack((x[1], x[0])))
+                # self.nb_hole_pt.append(np.vstack((x[1], x[0])))
 
-        # template without holes
-        self.img[self.img > 10] = 255
+        return tmpl
 
-        # template segments and pairs
-        self.seg = detect_all_segments(self.img, opt)[0]
-        self.pairs = segment_pairs(self.seg, opt)
+    def to_metric(self, calib_u: Calib) -> TemplateMetric:
+        """Create a metric template using the current image calibration."""
+
+        tmpl = TemplateMetric()
+
+        for s in self.seg:
+            u = np.hstack((s.u1, s.u2)).astype(float)
+            up = g.p2e(calib_u.mat_h0 @ g.e2p(u))
+            tmpl.seg += [up]
+
+        for s in self.hole_line:
+            up = g.p2e(calib_u.mat_h0 @ g.e2p(s))
+            tmpl.hole_line += [up]
+
+        return tmpl
+
+    @classmethod
+    def from_metric(cls, calib_u: Calib, opt: Opt, tmpl_m: TemplateMetric
+                    ) -> "Template":
+        """Create a new template from a metric template."""
+
+        seg = []
+        h0_inv = np.linalg.inv(calib_u.mat_h0)
+        for s in tmpl_m.seg:
+            u = g.p2e(h0_inv @ g.e2p(s))
+            seg += [u]
+
+        tmpl = cls(opt, seg=seg)
+
+        for i in range(len(tmpl_m.hole_line)):
+            u = g.p2e(h0_inv @ g.e2p(tmpl_m.hole_line[i]))
+            tmpl.hole_line += [u]
+
+            p, p_ngh = tmpl_m.hole_polygon(i)
+            u = g.p2e(h0_inv @ g.e2p(p))
+            u_ngh = g.p2e(h0_inv @ g.e2p(p_ngh))
+            tmpl.hole_polygon += [(u, u_ngh)]
+
+            tmpl.hole_pt += [pixels_in_convex_polygon(u)]
+            tmpl.nb_hole_pt += [pixels_in_convex_polygon(u_ngh)]
+
+            # generate pixel list for pixels inside the polygon u
+
+        return tmpl
 
     def match(self, seg, pairs, u, opt):
         rot, t, n_inl = match_pairs(pairs, self.pairs, seg, self.seg, opt)
@@ -317,7 +551,7 @@ class Template:
     def check_holes(self, img, rot, t, opt, rng):
         lines = []
         ids = []
-        # TODO maybe bettere to compute area of dark pixels in hole and
+        # TODO maybe better to compute area of dark pixels in hole and
         #  neighbourhood and compare to area of template hole
 
         for i in range(len(self.hole_pt)):
@@ -345,6 +579,7 @@ class Template:
                 ids += [i]
 
         return lines, ids
+
 
 def im_fit_h(mat_h, w, h):
     """Update homography and image sizes."""
@@ -745,6 +980,17 @@ def match_pairs(pairs, pairs_ref, seg, seg_ref, opt: Opt):
             rot = rot1 @ pr[1].T
             t = - rot @ pr[2] + t1
 
+            if False:
+                plt.figure(10)
+                plt.clf()
+
+                draw.pairs(pairs_ref, plt.gca(), color='g')
+                draw.pairs([pr], plt.gca(), pair_linewidth=5, color='g')
+
+                draw.pairs(pairs, plt.gca(), rot=rot.T, t=-rot.T @ t, color='r')
+                draw.pairs([p1], plt.gca(), pair_linewidth=5, rot=rot.T,
+                           t=-rot.T @ t, color='r')
+
             # image to ref
             mat = seg_distance_matrix(seg, rot.T, -rot.T @ t, seg_ref)
             dx = mat.min(axis=0)
@@ -779,7 +1025,7 @@ def abs_ori(ux, uy, scale=False):
     # absolute orientation with scale
     if scale:
         # Trace(Y_T @ R @ X ) / Trace (X_T @ X)
-        s = d.sum() / (ux1**2).sum()
+        s = d.sum() / (ux1 ** 2).sum()
         trn = ym - s * rot @ xm
         return rot, trn, s
 
