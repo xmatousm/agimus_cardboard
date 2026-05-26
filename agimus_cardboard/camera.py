@@ -106,6 +106,9 @@ class Camera(Node):
         t0 = time.time()
         if self.simulated_image is not None:
             self.img = self.simulated_image
+            self.simulated_image = np.vstack(
+                (self.simulated_image[5:], self.simulated_image[0:5]),
+            )
         else:
             self.img = self.cam.capture_image()
             failed = 0
