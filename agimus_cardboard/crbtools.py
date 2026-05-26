@@ -190,7 +190,7 @@ class Calib():
 
         _req('fx', 'fy', 'cx', 'cy', 'q')
         calib.mat_k = np.array([[data['fx'], data['q'], data['cx']],
-                                [0., data['fy'], data['cx']],
+                                [0., data['fy'], data['cy']],
                                 [0., 0., 1.]])
 
         if 'k1' in data:
