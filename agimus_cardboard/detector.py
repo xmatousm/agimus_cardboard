@@ -62,8 +62,7 @@ class Detector(Node):
 
         if self.camera_embedded:
             self.camera_node = Camera(calib_file, simulate_file,
-                                      name="detector")
-
+                                      name=self.get_name() + '_' + 'camera')
         else:
             self.subscriber = self.create_subscription(
                 MsgImage,
