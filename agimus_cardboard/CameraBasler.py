@@ -1,11 +1,7 @@
-import cv2
 from pypylon import pylon, genicam
 from datetime import datetime, timedelta
-import time
 import logging
 import time
-
-from sympy.core.benchmarks.bench_numbers import timeit_Integer_mul_Rational
 
 wait_time = 30  # seconds between retries
 log_interval = 1800  # seconds between logging the same error
@@ -22,6 +18,7 @@ class CameraBasler:
             log_exposure_changes: bool = True,
             # control info logging when exposure changes
             packet_size: int = 1500,
+            gain: int = 0,
     ):
         self.device_index = device_index
         self.serial_number = serial_number
@@ -30,6 +27,7 @@ class CameraBasler:
         self.camera = None
         self.converter = None
         self.packet_size = packet_size
+        self.gain = gain
         logger.info("Connecting to Basler camera:")
         if self.serial_number is not None:
             logger.info(f"  serial number: {self.serial_number}")
@@ -80,6 +78,11 @@ class CameraBasler:
                 info = self.camera.GetDeviceInfo()
                 self.camera.Open()
                 self.camera.GevSCPSPacketSize.SetValue(self.packet_size)
+                if self.gain < 0:
+                    self.camera.GainAuto.SetValue("Continuous")
+                else:
+                    self.camera.GainAuto.SetValue("Off")
+                    self.camera.GainRaw.SetValue(int(self.gain))
 
                 logger.info(
                     f"Connected to: {info.GetModelName()} ({info.GetSerialNumber()})")
@@ -93,11 +96,6 @@ class CameraBasler:
                 if self._should_log_error('runtime_error'):
                     logger.error(
                         f"Camera connection error: {str(e)}. Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-            except Exception as e:
-                if self._should_log_error('unexpected_error'):
-                    logger.error(
-                        f"Unexpected error: {str(e)}. Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
 
         # Exposure setup

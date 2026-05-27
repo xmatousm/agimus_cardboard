@@ -1,0 +1,9 @@
+---
+detector_params:
+  detector:
+    publish_debug:
+      type: bool
+      description: "Whether or not to publish debug images."
+    publish_debug_reduce:
+      type: int
+      description: "Reduce ratio of debug images."

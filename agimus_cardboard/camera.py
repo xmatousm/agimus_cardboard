@@ -5,7 +5,7 @@ from agimus_cardboard.CameraBasler import CameraBasler
 import rclpy
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image as MsgImage
-from agimus_cardboard.cardboard_parameters import cardboard_params
+from agimus_cardboard.camera_parameters import camera_params
 import yaml
 import agimus_cardboard.crbtools as crb
 import geometry.all as g
@@ -25,7 +25,7 @@ class Camera(Node):
         self.bridge = cv_bridge.CvBridge()
         self.img = None
         # parameters
-        self.param_listener = cardboard_params.ParamListener(self)
+        self.param_listener = camera_params.ParamListener(self)
         self.params = self.param_listener.get_params()
 
         serial_number = self.params.camera.serial
@@ -34,7 +34,6 @@ class Camera(Node):
         self.publish_raw = self.params.camera.publish_raw
         self.publish_plane = self.params.camera.publish_plane
         self.period = self.params.camera.period
-        packet_size = self.params.camera.packet_size
 
         # calibration
         with open(calib_file, 'r') as fh:
@@ -84,18 +83,17 @@ class Camera(Node):
         else:
             self.simulated_image = None
 
-            assert len(serial_number) > 0
-            assert exposure_us > 0
-
             self.cam = CameraBasler(serial_number=serial_number,
                                     exposure_us=exposure_us,
-                                    packet_size=packet_size)
+                                    packet_size=self.params.camera.packet_size,
+                                    gain=self.params.camera.gain)
 
             self.get_logger().info(
                 "Camera initialized:\n" +
                 f"  serial={serial_number}\n" +
                 f"  exposure={exposure_us}\n" +
-                f"  packet_size={packet_size}\n" +
+                f"  packet_size={self.params.camera.packet_size}\n" +
+                f"  gain={self.params.camera.gain}\n" +
                 f"  raw={self.publish_raw}\n" +
                 f"  plane={self.publish_plane}")
 

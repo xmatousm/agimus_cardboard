@@ -9,8 +9,8 @@ from sensor_msgs.msg import Image as MsgImage
 import agimus_cardboard.crbtools as crb
 import agimus_cardboard.draw as draw
 
-from agimus_cardboard.cardboard_parameters import cardboard_params
 from agimus_controller_mod_msgs.msg import HoleNeeded
+from agimus_cardboard.detector_parameters import detector_params
 import yaml
 
 import cv2
@@ -41,7 +41,7 @@ class Detector(Node):
         self.bridge = cv_bridge.CvBridge()
 
         # parameters
-        self.param_listener = cardboard_params.ParamListener(self)
+        self.param_listener = detector_params.ParamListener(self)
         self.params = self.param_listener.get_params()
 
         self.publish_debug = self.params.detector.publish_debug

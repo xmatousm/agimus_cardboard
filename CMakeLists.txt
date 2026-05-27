@@ -12,8 +12,12 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 generate_parameter_module(
-  cardboard_parameters
-  agimus_cardboard/cardboard_parameters.yaml)
+  camera_parameters
+  agimus_cardboard/camera_parameters.yaml)
+
+generate_parameter_module(
+  detector_parameters
+  agimus_cardboard/detector_parameters.yaml)
 
 generate_parameter_module(
   hole_planner_parameters
@@ -25,11 +29,4 @@ ament_python_install_package(${PROJECT_NAME} SCRIPTS_DESTINATION
 ament_python_install_package(geometry)
 ament_python_install_package(mathlib)
 
-#
-# Installation
-#
-# install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
-#install(DIRECTORY config launch rviz templates
-#        DESTINATION share/${PROJECT_NAME})
-
-ament_auto_package()
+ament_auto_package(INSTALL_TO_SHARE templates)
