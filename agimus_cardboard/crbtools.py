@@ -52,7 +52,7 @@ def pixels_in_convex_polygon(u: Matrix2N):
     # Cross products for all points against all edges
     # cross = E_x * (P_y - A_y) - E_y * (P_x - A_x)
     cross = edge[:, [0]] * (pt[1] - beg[:, [1]]) - edge[:, [1]] * (
-                pt[0] - beg[:, [0]])
+            pt[0] - beg[:, [0]])
 
     # Inside if all cross products have same sign
     eps = 1e-12
@@ -549,8 +549,11 @@ class Template:
         return rot1, t1, n_inl, dq
 
     def check_holes(self, img, rot, t, opt, rng):
-        lines = []
-        ids = []
+        lines_full = []
+        ids_full = []
+        lines_empty = []
+        ids_empty = []
+
         # TODO maybe better to compute area of dark pixels in hole and
         #  neighbourhood and compare to area of template hole
 
@@ -575,10 +578,13 @@ class Template:
             df = val_out - val_in
 
             if df < opt.diff['thr']:
-                lines += [rot @ self.hole_line[i] + t]
-                ids += [i]
+                lines_full += [rot @ self.hole_line[i] + t]
+                ids_full += [i]
+            else:
+                lines_empty += [rot @ self.hole_line[i] + t]
+                ids_empty += [i]
 
-        return lines, ids
+        return lines_full, ids_full, lines_empty, ids_empty
 
 
 def im_fit_h(mat_h, w, h):
