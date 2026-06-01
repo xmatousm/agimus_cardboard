@@ -1,3 +1,4 @@
+from typing import Optional
 import time
 import argparse
 from rclpy.node import Node
@@ -17,7 +18,8 @@ import cv_bridge
 class Camera(Node):
     """"""
 
-    def __init__(self, calib_file: str, simulate_file: str = None,
+    def __init__(self, calib_file: str, simulate_file: Optional[str] = None,
+                 mask_file: Optional[str] = None,
                  name="camera"):
         self.initialized = False
         super().__init__(name)
@@ -46,6 +48,13 @@ class Camera(Node):
         mat_h = self.calib_u.mat_k @ rot.T @ np.linalg.inv(self.calib_u.mat_k)
         self.mat_h, self.new_w, self.new_h = crb.im_fit_h(mat_h, self.calib_u.w,
                                                           self.calib_u.h)
+
+        self.mask = None
+
+        if mask_file is not None:
+            mask = cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)
+            assert mask.shape == (self.calib.h, self.calib.w)
+            self.mask = (mask > 0).astype(np.uint8)
 
         # publishers
         if self.publish_raw:
@@ -121,6 +130,14 @@ class Camera(Node):
         t2 = 0.0
         t3 = 0.0
 
+        if self.mask is not None:
+            if len(self.img.shape) == 3:
+                self.img[:,:,0] = self.img[:,:,0] * self.mask
+                self.img[:,:,1] = self.img[:,:,1] * self.mask
+                self.img[:,:,2] = self.img[:,:,2] * self.mask
+            else:
+                self.img = self.img * self.mask
+
         if self.publish_raw:
             t = time.time()
 
@@ -161,6 +178,7 @@ def main(args=None):
         parser = argparse.ArgumentParser("camera")
         parser.add_argument("--calib-file", type=str, required=True)
         parser.add_argument("--simulate-file", type=str, required=False)
+        parser.add_argument("--mask-file", type=str, required=False)
         args = parser.parse_args(args[1:])  # skip the script name
 
         node = Camera(**vars(args))

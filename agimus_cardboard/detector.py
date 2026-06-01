@@ -33,6 +33,7 @@ class Detector(Node):
                  calib_file: str,
                  robot_calib_file: Optional[str] = None,
                  simulate_file: Optional[str] = None,
+                 mask_file: Optional[str] = None,
                  camera_embedded: bool = True):
         super().__init__("detector")
 
@@ -91,6 +92,7 @@ class Detector(Node):
 
         if self.camera_embedded:
             self.camera_node = Camera(calib_file, simulate_file,
+                                      mask_file,
                                       name=self.get_name() + '_' + 'camera')
         else:
             self.subscriber = self.create_subscription(
@@ -361,6 +363,7 @@ def main(args=None):
         parser.add_argument("--calib-file", type=str, required=True)
         parser.add_argument("--robot-calib-file", type=str, required=False)
         parser.add_argument("--simulate-file", type=str, required=False)
+        parser.add_argument("--mask-file", type=str, required=False)
         parser.add_argument("--camera-embedded", action="store_true")
         args = parser.parse_args(args[1:])  # skip the script name
 
