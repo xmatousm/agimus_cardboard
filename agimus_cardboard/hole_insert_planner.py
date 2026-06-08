@@ -21,6 +21,9 @@ from agimus_controller_mod_ros.trajectory_builders.trajectory_builder import (
     get_weights, get_all_weights
 )
 
+from agimus_controller_mod_ros import node_utils as utils
+from std_srvs.srv import SetBool
+
 class HoleInsertPlanner(Node):
     """"""
 
@@ -97,6 +100,10 @@ class HoleInsertPlanner(Node):
 
         self.action_client = ActionClient(self, TrajectoryAction,
                                           'trajectory_goal')
+
+        self.srv_gripper = utils.service_client(self, SetBool,
+                                                    "schunk_gripper/activate")
+
 
     def hole_callback(self, msg_in: Hole):
         self.hole_needed = [msg_in.id, msg_in.pose1, msg_in.pose2]
@@ -193,6 +200,15 @@ class HoleInsertPlanner(Node):
         # TODO treat orientation
         return p1, p2, angle
 
+    def gripper(self, state: bool):
+        self.get_logger().info(f'Setting gripper: {state}')
+
+        request = SetBool.Request()
+        request.data = state
+        self.srv_gripper.wait_for_service()
+        future = self.srv_gripper.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
     def process_one(self, select_id):
         p1, p2, angle = self.select_hole(select_id)
         p_mid = (p1 + p2) / 2.0
@@ -211,6 +227,7 @@ class HoleInsertPlanner(Node):
         self.send_point(self.one_point(p_up, angle, 'prepare'), 2, "up")
         self.send_point(self.one_point(p_mid, angle, 'hole'), 3, "mid")
         self.send_point(self.one_point(p_dn, angle, 'hole'), 3, "dn")
+        self.gripper(True)
 
         # move up, decrease weights
         self.send_point(self.one_point(p_up, angle, 'prepare'), 4, "up")
@@ -251,6 +268,7 @@ class HoleInsertPlanner(Node):
 
         # move to the initial pose
         self.send_point(self.one_point(self.init_pose, 0.0, 'normal'), 0, "out")
+        self.gripper(False)
 
         self.publish_working_area(1.0, 0.0, 0.0)
 
