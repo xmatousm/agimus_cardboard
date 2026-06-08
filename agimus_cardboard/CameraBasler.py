@@ -9,6 +9,10 @@ log_interval = 1800  # seconds between logging the same error
 logger = logging.getLogger(__name__)
 
 class CameraBasler:
+    # TODO: the camera should stay open after setting the parameters.
+    # Otherwise, we observed in some cases, that the packet_size is reset
+    # to wrong value.
+
     def __init__(
             self,
             device_index: int = None,
@@ -40,6 +44,9 @@ class CameraBasler:
     def _connect_camera(self):
         while True:
             try:
+                if self.is_open():
+                    self.camera.Close()
+
                 factory = pylon.TlFactory.GetInstance()
                 devices = factory.EnumerateDevices()
                 if not devices:
@@ -88,8 +95,6 @@ class CameraBasler:
                     f"Connected to: {info.GetModelName()} ({info.GetSerialNumber()})")
                 logger.info(
                     f"Packet size: {self.camera.GevSCPSPacketSize.GetValue()}")
-                self.camera.Close()
-
                 break
 
             except (pylon.RuntimeException, genicam.RuntimeException) as e:
@@ -101,13 +106,21 @@ class CameraBasler:
         # Exposure setup
         if self.exposure_us > 0:
             try:
-                print('set:', self.exposure_us, flush=True)
-                self.set_exposure(exposure_us=self.exposure_us)
-                print('ok set:', self.exposure_us, flush=True)
+                logger.info(f"  exposure: {self.exposure_us}")
+                self._set_exposure(self.exposure_us)
             except Exception as e:
                 logger.warning(f"Failed to set exposure: {str(e)}")
 
+    def is_open(self) -> bool:
+        return self.camera is not None and self.camera.IsOpen()
+
     def set_exposure(self, exposure_us: int = -1, timeout: int = 10):
+        if not self.is_open():
+            self._connect_camera()
+
+        self._set_exposure(exposure_us, timeout)
+
+    def _set_exposure(self, exposure_us: int = -1, timeout: int = 10):
         """Set exposure. exposure_us in microseconds."""
         #if exposure_us <= 0 or exposure_us == self.exposure_us:
         #    return
@@ -155,7 +168,6 @@ class CameraBasler:
                     logger.warning(
                         "ExposureTimeRaw not writable (check grabbing state / auto modes).")
 
-                self.camera.Close()
                 return
 
             except Exception as e:
