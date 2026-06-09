@@ -14,6 +14,17 @@ from mathlib.types import VectorI, ColVector3, RowVector, Matrix33, Matrix, \
 
 from agimus_cardboard import draw as draw
 
+holder_aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+
+holder = {
+    'w': 0.330,
+    'h': 0.200,
+    'marker1': np.array([[0.030], [0.030]]),
+    'marker2': np.array([[0.295], [0.165]]),
+    'centers_x': [0.023, 0.063, 0.103, 0.143, 0.183, 0.223, 0.263, 0.304],
+    'center_y': 0.095,
+}
+
 
 def _req(data: dict[str, Any], *key: str, dtype: type = float):
     """Check the presence and types of required keys."""
@@ -1072,3 +1083,97 @@ def icp_points_lines(seg_ref: list[LineSegment], u, rot, trn, opt: Opt):
         rot, trn = abs_ori(u_ref, u_ok)
 
     return rot, trn
+
+def detect_holder(img):
+    # parameters = cv2.aruco.DetectorParameters()
+
+    corners, ids, rejected = aruco.detectMarkers(image=img,
+                                                 dictionary=holder_aruco_dict)
+    if ids is None:
+        return None
+    c1 = None
+    c2 = None
+
+    cm1 = holder['marker1']
+    cm2 = holder['marker2']
+    cm = np.hstack((cm1, cm2))
+
+    # TODO use intersection of diagonals, not mean
+    for i in range(len(ids)):
+        if ids[i][0] == 0:
+            c1 = corners[i][0].T.mean(axis=1).reshape((2, -1))
+        if ids[i][0] == 1:
+            c2 = corners[i][0].T.mean(axis=1).reshape((2, -1))
+
+    if c1 is None or c2 is None:
+        return None
+
+    plt.plot(c1[0], c1[1], '.')
+    plt.plot(c2[0], c2[1], '.')
+
+    c = np.hstack((c1, c2))
+
+    u = c1 - c2
+    l = np.linalg.norm(u)
+    u1 = u / l
+    u2 = np.array([[-u1[1, 0]], [u1[0, 0]]])
+    R = np.hstack((u1, u2))
+
+    um = cm1 - cm2
+    lm = np.linalg.norm(um)
+    um1 = um / lm
+    um2 = np.array([[-um1[1, 0]], [um1[0, 0]]])
+    Rm = np.hstack((um1, um2))
+
+    scale = l / lm
+    rot = R @ Rm.T
+
+    cx = scale * rot @ cm
+
+    shift = c.mean(axis=1).reshape((2, -1)) - cx.mean(axis=1).reshape((2, -1))
+
+    trn = np.eye(3)
+    trn[:2, :2] = scale * rot
+    trn[:2, [2]] = shift
+    return trn
+
+
+def holder_parts(img, trn):
+    lines = []
+    ids = []
+    delta = 0.02  # TODO part width
+    for i in range(len(holder['centers_x'])):
+        x = holder['centers_x'][i]
+        y = holder['center_y']
+        y1 = holder['center_y'] - delta
+        y2 = holder['center_y'] + delta
+
+        um = np.array([[x, x], [y1, y2]])
+        u = g.p2e(trn @ g.e2p(um))
+
+        uc = u.mean(axis=1).astype(int)
+        # TODO detection of filled parts in holder
+        w = 10
+        thr = 50
+        sample = img[(uc[1]-w):(uc[1]+w), (uc[0]-w):(uc[0]+w)]
+        if sample.mean() > thr:
+            lines += [u]
+            ids += [i]
+
+    return lines, ids
+
+def holder_remove(img, trn):
+    # TODO remove only outline, not BB.
+    um = np.array([
+        [0.0, holder['w'], holder['w'], 0.0],
+        [0.0, 0.0, holder['h'], holder['h']]])
+
+    u = g.p2e(trn @ g.e2p(um))
+
+    xmin = int(min(u[0])) - 1
+    xmax = int(max(u[0])) + 1
+    ymin = int(min(u[1])) - 1
+    ymax = int(max(u[1])) + 1
+
+    img[ymin:ymax, xmin:xmax] = 0
+    return img

@@ -24,6 +24,7 @@ from agimus_controller_mod_ros.trajectory_builders.trajectory_builder import (
 from agimus_controller_mod_ros import node_utils as utils
 from std_srvs.srv import SetBool
 
+
 class HoleInsertPlanner(Node):
     """"""
 
@@ -51,7 +52,7 @@ class HoleInsertPlanner(Node):
         self.goal_param = {
             'normal': {
                 'speed': self.params.speed,
-                'duration': 1.0, # TODO min duration -> param
+                'duration': 2.0,  # TODO min duration -> param
                 'goal_tolerance': self.params.goal_tolerance,
                 'w_pose': get_weights(self.params.w_pose, 6),
             },
@@ -61,10 +62,10 @@ class HoleInsertPlanner(Node):
                 'goal_tolerance': self.params.goal_tolerance_prepare,
                 'w_pose': get_weights(self.params.w_pose_prepare, 6)
             },
-            'hole':{
+            'hole': {
                 'speed': self.params.speed_hole,
                 'duration': None,
-                'goal_tolerance': self.params.goal_tolerance_prepare / 3,
+                'goal_tolerance': 0.0,
                 'w_pose': get_weights(self.params.w_pose_hole, 6),
             },
         }
@@ -82,6 +83,14 @@ class HoleInsertPlanner(Node):
                                    reliability=ReliabilityPolicy.RELIABLE),
         )
 
+        self.subscriber = self.create_subscription(
+            Hole,
+            "holder_part",
+            self.holder_part_callback,
+            qos_profile=QoSProfile(depth=2,
+                                   reliability=ReliabilityPolicy.RELIABLE),
+        )
+
         # debug publisher for working area
         self._marker_publisher = self.create_publisher(
             Marker,
@@ -94,6 +103,7 @@ class HoleInsertPlanner(Node):
         )
 
         self.hole_needed = None
+        self.holder_part = None
         self.ids = []
         self.p1s = []
         self.p2s = []
@@ -102,12 +112,15 @@ class HoleInsertPlanner(Node):
                                           'trajectory_goal')
 
         self.srv_gripper = utils.service_client(self, SetBool,
-                                                    "schunk_gripper/activate")
-
+                                                "schunk_gripper/activate")
 
     def hole_callback(self, msg_in: Hole):
         self.hole_needed = [msg_in.id, msg_in.pose1, msg_in.pose2]
         self.get_logger().debug(f'Hole {self.hole_needed}')
+
+    def holder_part_callback(self, msg_in: Hole):
+        self.holder_part = [msg_in.id, msg_in.pose1, msg_in.pose2]
+        self.get_logger().debug(f'Part {self.holder_part}')
 
     def one_point(self, p, angle, key: str):
         goal = TrajectoryAction.Goal()
@@ -148,57 +161,66 @@ class HoleInsertPlanner(Node):
         result = result_future.result().result
         self.get_logger().info(f'Result: {result}')
 
-    def read_holes_needed(self, wait=True):
-        # always wait for a message; if required, wait for the nonempty hole
-        self.ids = []
-        while len(self.ids) == 0:
+    def _in_range(self, u, angle) -> bool:
+        if not (self.x_min < u[0] < self.x_max):
+            return False
+        if not (self.y_min < u[1] < self.y_max):
+            return False
+        if not -3.0 < angle < 3.0:
+            return False
+        return True
+
+    def _select_hole(self, data_in):
+        ids, u1s, u2s = data_in
+        if len(ids) < 1:
+            return None, None
+
+        u1s = np.array(u1s).reshape((-1, 3)).T
+        u2s = np.array(u2s).reshape((-1, 3)).T
+
+        for i in range(len(ids)):
+            u = (u1s[:, i] + u2s[:, i]) / 2
+            angle = np.arctan2(u1s[1, i] - u2s[1, i],
+                               u1s[0, i] - u2s[0, i])
+            if self._in_range(u, angle):
+                return u, angle
+
+        return None, None
+
+    def read_select_hole(self):
+        while True:
+            self.publish_working_area(1.0, 0.0, 0.0)
+            self.get_logger().info(f'Waiting for a hole')
             while self.hole_needed is None:
                 rclpy.spin_once(self)
 
-            self.ids, self.p1s, self.p2s = self.hole_needed
-            self.hole_needed = None
+            u, angle = self._select_hole(self.hole_needed)
+            self.clean_holes()
+            if u is not None:
+                self.publish_working_area(0.0, 1.0, 0.0)
+                self.get_logger().info(f'Hole angle: {angle}')
+                return u, angle
 
-            if not self.holes_in_range():
-                self.get_logger().error('Some hole not in range')
-                self.ids, self.p1s, self.p2s = [], [], []
 
-            if not wait:
-                return
+    def clean_holes(self):
+        self.hole_needed = None
 
-    def holes_in_range(self) -> bool:
-        for i in range(len(self.ids)):
-            if not (self.x_min < self.p1s[i * 3] < self.x_max):
-                return False
-            if not (self.y_min < self.p1s[i * 3 + 1] < self.y_max):
-                return False
-            if not (self.x_min < self.p2s[i * 3] < self.x_max):
-                return False
-            if not (self.y_min < self.p2s[i * 3 + 1] < self.y_max):
-                return False
-        return True
+    def read_select_part(self):
+        while True:
+            self.publish_working_area(1.0, 0.5, 0.0)
+            self.get_logger().info(f'Waiting for a part')
+            while self.holder_part is None:
+                rclpy.spin_once(self)
 
-    def select_hole(self, select_id):
-        inx = None
-        # select the proper hole or return None
-        for i in range(len(self.ids)):
-            if self.ids[i] == select_id:
-                inx = i
-                break
+            u, angle = self._select_hole(self.holder_part)
+            self.clean_parts()
+            if u is not None:
+                self.publish_working_area(0.0, 0.0, 1.0)
+                self.get_logger().info(f'Part angle: {angle}')
+                return u, angle
 
-        if inx is None:  # proper hole not found
-            return None, None, None
-
-        p1 = np.array(self.p1s[inx * 3:inx * 3 + 3])
-        p2 = np.array(self.p2s[inx * 3:inx * 3 + 3])
-
-        angle = np.arctan2(p1[1] - p2[1], p1[0] - p2[0])
-
-        if angle > np.pi / 2 or angle < -np.pi / 2:
-            p1, p2 = p2, p1
-            angle = np.arctan2(p1[1] - p2[1], p1[0] - p2[0])
-
-        # TODO treat orientation
-        return p1, p2, angle
+    def clean_parts(self):
+        self.holder_part = None
 
     def gripper(self, state: bool):
         self.get_logger().info(f'Setting gripper: {state}')
@@ -209,29 +231,77 @@ class HoleInsertPlanner(Node):
         future = self.srv_gripper.call_async(request)
         rclpy.spin_until_future_complete(self, future)
 
-    def process_one(self, select_id):
-        p1, p2, angle = self.select_hole(select_id)
-        p_mid = (p1 + p2) / 2.0
+    def process_one(self):
+
+        self.get_logger().info("Processing part")
+
+        self.publish_working_area(1.0, 1.0, 1.0)
+
+        # take one part
+        pu, angle = self.read_select_part()
+
+        pu_up = pu.copy()
+        pu_up[2] += self.delta_z
+        pu[2] -= 0.01  # TODO param - some pressure to correctly grab the part
+
+        # move above the part
+        self.send_point(self.one_point(pu_up, angle, 'normal'), 1, "part up-")
+
+        # cardboard is visible now, clean holes, so the actual data will be used next
+        self.clean_holes()
+
+        self.gripper(True)
+
+        # increase weights then move down
+        self.send_point(self.one_point(pu_up, angle, 'prepare'), 2, "part up+")
+        self.send_point(self.one_point(pu, angle, 'hole'), 4, "part down")
+
+        # grab
+        self.gripper(False)
+
+        # move up then decrease weights
+        self.send_point(self.one_point(pu_up, angle, 'hole'), 5, "part up+")
+        self.send_point(self.one_point(pu_up, angle, 'normal'), 6, "part up")
+
+        self.get_logger().info("Processing hole")
+
+        p_mid, angle_h = self.read_select_hole()
         p_up = p_mid.copy()
         p_dn = p_mid.copy()
 
         p_up[2] += self.delta_z
         p_mid[2] += 0.5 * self.delta_z
+        p_dn[2] -= 0.01  # TODO param - additional pressure
 
-        self.publish_working_area(1.0, 1.0, 1.0)
+        if angle > 0.0 > angle_h or angle < 0.0 < angle_h:
+            # move to zero angle first
+            self.send_point(self.one_point(p_up, 0.0, 'normal'), 1, "rot")
 
         # move above the hole beginning
-        self.send_point(self.one_point(p_up, angle, 'normal'), 1, "up-")
+        self.send_point(self.one_point(p_up, angle_h, 'normal'), 1, "up-")
+
+        # parts are visible now, clean them, the actual data will be used next
+        self.clean_parts()
 
         # increase weights then move down
-        self.send_point(self.one_point(p_up, angle, 'prepare'), 2, "up")
-        self.send_point(self.one_point(p_mid, angle, 'hole'), 3, "mid")
-        self.send_point(self.one_point(p_dn, angle, 'hole'), 3, "dn")
+        self.send_point(self.one_point(p_up, angle_h, 'prepare'), 2, "up+")
+        self.send_point(self.one_point(p_mid, angle_h, 'prepare'), 3, "mid+")
+        self.send_point(self.one_point(p_dn, angle_h, 'hole'), 3, "dn")
+
+        # release
         self.gripper(True)
 
         # move up, decrease weights
-        self.send_point(self.one_point(p_up, angle, 'prepare'), 4, "up")
-        self.send_point(self.one_point(p_up, angle, 'normal'), 5, "up-2")
+        self.send_point(self.one_point(p_up, angle_h, 'hole'), 4, "up")
+        self.send_point(self.one_point(p_up, angle_h, 'normal'), 5, "up-")
+
+        if angle > 0.0 > angle_h or angle < 0.0 < angle_h:
+            # move to zero angle again
+            self.send_point(self.one_point(p_up, 0.0, 'normal'), 1, "rot")
+
+
+        self.publish_working_area(1.0, 1.0, 1.0)
+        self.get_logger().info("Done")
 
     def publish_working_area(self, r, g, b):
         marker = Marker()
@@ -260,7 +330,7 @@ class HoleInsertPlanner(Node):
         self._marker_publisher.publish(marker)
 
     def process(self):
-        self.get_logger().info("Processing")
+        self.get_logger().info("Init")
 
         # working area markers
         self.publish_working_area(1.0, 1.0, 1.0)
@@ -269,18 +339,13 @@ class HoleInsertPlanner(Node):
         # move to the initial pose
         self.send_point(self.one_point(self.init_pose, 0.0, 'normal'), 0, "out")
         self.gripper(False)
+        self.gripper(True)
 
-        self.publish_working_area(1.0, 0.0, 0.0)
+        self.clean_holes()
+        self.clean_parts()
 
-        self.hole_needed = None
-        self.read_holes_needed(wait=True)
-        assert len(self.ids) > 0
-
-        ids = self.ids
-        for current_id in ids:
-            self.process_one(current_id)
-
-        self.get_logger().info("Done")
+        while True:
+            self.process_one()
 
 
 def main(args=None):

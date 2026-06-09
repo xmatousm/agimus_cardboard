@@ -34,6 +34,7 @@ class Detector(Node):
                  robot_calib_file: Optional[str] = None,
                  simulate_file: Optional[str] = None,
                  mask_file: Optional[str] = None,
+                 detect_holder: bool = False,
                  camera_embedded: bool = True):
         super().__init__("detector")
 
@@ -50,9 +51,8 @@ class Detector(Node):
 
         self.opt = crb.Opt()
         self.is_debug = self.get_logger().is_enabled_for(LoggingSeverity.DEBUG)
-
+        self.detect_holder = detect_holder
         # template
-        plt.ion()
         with open(calib_file, 'r') as fh:
             calib_data = yaml.load(fh, Loader=yaml.SafeLoader)
 
@@ -68,6 +68,7 @@ class Detector(Node):
 
         # draw template if in debug mode
         if self.is_debug:
+            plt.ion()
             plt.figure(1)
             draw.template_metric(tmpl_m, plt.gca())
 
@@ -120,6 +121,27 @@ class Detector(Node):
             qos_profile=QoSProfile(depth=2,
                                    reliability=ReliabilityPolicy.RELIABLE),
         )
+
+        if self.detect_holder:
+            # publisher for holder
+            self._holder_part_publisher = self.create_publisher(
+                Hole,
+                "holder_part",
+                qos_profile=QoSProfile(depth=2,
+                                       reliability=ReliabilityPolicy.RELIABLE),
+            )
+
+            # debug publisher for markers for holder parts
+            self._holder_part_marker_publisher = self.create_publisher(
+                Marker,
+                "holder_part_marker",
+                qos_profile=QoSProfile(
+                    depth=1,
+                    reliability=ReliabilityPolicy.RELIABLE,
+                    history=HistoryPolicy.KEEP_LAST,
+                ),
+            )
+
 
         # debug publisher for markers for needed holes
         self._hole_needed_marker_publisher = self.create_publisher(
@@ -251,6 +273,21 @@ class Detector(Node):
             kernel = np.ones((5, 5), np.uint8)
             self.mask = cv2.erode(self.mask, kernel, iterations=1)
 
+        if self.detect_holder:
+            holder_trn = crb.detect_holder(self.img_u)
+
+            if holder_trn is not None:
+                part_lines, part_ids = crb.holder_parts(self.img_u, holder_trn)
+                self.img_u = crb.holder_remove(self.img_u, holder_trn)
+
+                msg, marker = self.holes_to_robot_space_msg_marker(
+                    part_lines, part_ids, marker_ns='holder_parts')
+
+                self._holder_part_marker_publisher.publish(marker)
+                self._holder_part_publisher.publish(msg)
+                self.get_logger().debug(f"Holder: {part_ids}")
+
+
         t = time.time()
         seg, img_e, u = crb.detect_all_segments(self.img_u, self.opt, self.mask)
         t1 = time.time() - t
@@ -364,6 +401,7 @@ def main(args=None):
         parser.add_argument("--robot-calib-file", type=str, required=False)
         parser.add_argument("--simulate-file", type=str, required=False)
         parser.add_argument("--mask-file", type=str, required=False)
+        parser.add_argument("--detect-holder", action="store_true")
         parser.add_argument("--camera-embedded", action="store_true")
         args = parser.parse_args(args[1:])  # skip the script name
 
