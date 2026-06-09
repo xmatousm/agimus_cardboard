@@ -140,7 +140,7 @@ class HoleInsertPlanner(Node):
         return goal
 
     def send_point(self, goal, pid, name):
-        self.get_logger().error(f"Sending goal {pid}:{name}")
+        self.get_logger().info(f"Sending goal {pid}:{name}")
 
         goal.goal.id = pid
         # send goal
@@ -152,14 +152,14 @@ class HoleInsertPlanner(Node):
             self.get_logger().error('Goal rejected')
             rclpy.shutdown()
 
-        self.get_logger().info('Goal accepted')
+        self.get_logger().debug('Goal accepted')
 
         # wait for result
         result_future = goal_handle.get_result_async()
         rclpy.spin_until_future_complete(self, result_future)
 
         result = result_future.result().result
-        self.get_logger().info(f'Result: {result}')
+        self.get_logger().debug(f'Result: {result}')
 
     def _in_range(self, u, angle) -> bool:
         if not (self.x_min < u[0] < self.x_max):
@@ -173,7 +173,7 @@ class HoleInsertPlanner(Node):
     def _select_hole(self, data_in):
         ids, u1s, u2s = data_in
         if len(ids) < 1:
-            return None, None
+            return None, None, None
 
         u1s = np.array(u1s).reshape((-1, 3)).T
         u2s = np.array(u2s).reshape((-1, 3)).T
@@ -183,9 +183,9 @@ class HoleInsertPlanner(Node):
             angle = np.arctan2(u1s[1, i] - u2s[1, i],
                                u1s[0, i] - u2s[0, i])
             if self._in_range(u, angle):
-                return u, angle
+                return u, angle, ids[i]
 
-        return None, None
+        return None, None, None
 
     def read_select_hole(self):
         while True:
@@ -194,11 +194,10 @@ class HoleInsertPlanner(Node):
             while self.hole_needed is None:
                 rclpy.spin_once(self)
 
-            u, angle = self._select_hole(self.hole_needed)
+            u, angle, _ = self._select_hole(self.hole_needed)
             self.clean_holes()
             if u is not None:
                 self.publish_working_area(0.0, 1.0, 0.0)
-                self.get_logger().info(f'Hole angle: {angle}')
                 return u, angle
 
 
@@ -212,18 +211,28 @@ class HoleInsertPlanner(Node):
             while self.holder_part is None:
                 rclpy.spin_once(self)
 
-            u, angle = self._select_hole(self.holder_part)
+            u, angle, part_id = self._select_hole(self.holder_part)
             self.clean_parts()
             if u is not None:
                 self.publish_working_area(0.0, 0.0, 1.0)
-                self.get_logger().info(f'Part angle: {angle}')
-                return u, angle
+                return u, angle, part_id
+
+    def query_part(self, part_id) -> bool:
+        self.get_logger().info(f'Query part {part_id}')
+
+        while self.holder_part is None:
+            rclpy.spin_once(self)
+
+        ids, _, _ =  self.holder_part
+        print(ids, ">>>")
+        return part_id in ids
+
 
     def clean_parts(self):
         self.holder_part = None
 
     def gripper(self, state: bool):
-        self.get_logger().info(f'Setting gripper: {state}')
+        self.get_logger().debug(f'Setting gripper: {state}')
 
         request = SetBool.Request()
         request.data = state
@@ -233,12 +242,13 @@ class HoleInsertPlanner(Node):
 
     def process_one(self):
 
-        self.get_logger().info("Processing part")
-
         self.publish_working_area(1.0, 1.0, 1.0)
 
         # take one part
-        pu, angle = self.read_select_part()
+        pu, angle, part_id = self.read_select_part()
+
+        self.get_logger().info(
+            f"Processing part {part_id} ({int(angle/np.pi*180)} deg)")
 
         pu_up = pu.copy()
         pu_up[2] += self.delta_z
@@ -263,9 +273,10 @@ class HoleInsertPlanner(Node):
         self.send_point(self.one_point(pu_up, angle, 'hole'), 5, "part up+")
         self.send_point(self.one_point(pu_up, angle, 'normal'), 6, "part up")
 
-        self.get_logger().info("Processing hole")
-
         p_mid, angle_h = self.read_select_hole()
+
+        self.get_logger().info(f"Processing hole {angle_h}")
+
         p_up = p_mid.copy()
         p_dn = p_mid.copy()
 
@@ -280,25 +291,29 @@ class HoleInsertPlanner(Node):
         # move above the hole beginning
         self.send_point(self.one_point(p_up, angle_h, 'normal'), 1, "up-")
 
-        # parts are visible now, clean them, the actual data will be used next
-        self.clean_parts()
+        # check if the part is not there
+        if self.query_part(part_id):
+            self.get_logger().error(f"Grab failed")
 
-        # increase weights then move down
-        self.send_point(self.one_point(p_up, angle_h, 'prepare'), 2, "up+")
-        self.send_point(self.one_point(p_mid, angle_h, 'prepare'), 3, "mid+")
-        self.send_point(self.one_point(p_dn, angle_h, 'hole'), 3, "dn")
+        else:
+            # parts are visible now, clean them, the actual data will be used next
+            self.clean_parts()
 
-        # release
-        self.gripper(True)
+            # increase weights then move down
+            self.send_point(self.one_point(p_up, angle_h, 'prepare'), 2, "up+")
+            self.send_point(self.one_point(p_mid, angle_h, 'prepare'), 3, "mid+")
+            self.send_point(self.one_point(p_dn, angle_h, 'hole'), 3, "dn")
 
-        # move up, decrease weights
-        self.send_point(self.one_point(p_up, angle_h, 'hole'), 4, "up")
-        self.send_point(self.one_point(p_up, angle_h, 'normal'), 5, "up-")
+            # release
+            self.gripper(True)
+
+            # move up, decrease weights
+            self.send_point(self.one_point(p_up, angle_h, 'hole'), 4, "up")
+            self.send_point(self.one_point(p_up, angle_h, 'normal'), 5, "up-")
 
         if angle > 0.0 > angle_h or angle < 0.0 < angle_h:
             # move to zero angle again
             self.send_point(self.one_point(p_up, 0.0, 'normal'), 1, "rot")
-
 
         self.publish_working_area(1.0, 1.0, 1.0)
         self.get_logger().info("Done")
