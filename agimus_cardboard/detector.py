@@ -6,6 +6,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.node import Node
 from builtin_interfaces.msg import Duration as DurationMsg
 from sensor_msgs.msg import Image as MsgImage
+
 import agimus_cardboard.crbtools as crb
 import agimus_cardboard.draw as draw
 
@@ -19,12 +20,14 @@ import time
 import cv_bridge
 from agimus_cardboard.camera import Camera
 import geometry.basic as gb
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
+from std_msgs.msg import ColorRGBA
 import matplotlib.pyplot as plt
 import matplotlib
 
 matplotlib.use('qtagg')
+
 
 class Detector(Node):
     """"""
@@ -106,14 +109,6 @@ class Detector(Node):
                 ),
             )
 
-        # publisher for needed holes
-        self._hole_needed_publisher = self.create_publisher(
-            Hole,
-            "hole_needed",
-            qos_profile=QoSProfile(depth=2,
-                                   reliability=ReliabilityPolicy.RELIABLE),
-        )
-
         # publisher for all holes
         self._hole_publisher = self.create_publisher(
             Hole,
@@ -133,7 +128,7 @@ class Detector(Node):
 
             # debug publisher for markers for holder parts
             self._holder_part_marker_publisher = self.create_publisher(
-                Marker,
+                MarkerArray,
                 "holder_part_marker",
                 qos_profile=QoSProfile(
                     depth=1,
@@ -142,21 +137,9 @@ class Detector(Node):
                 ),
             )
 
-
-        # debug publisher for markers for needed holes
-        self._hole_needed_marker_publisher = self.create_publisher(
-            Marker,
-            "hole_needed_marker",
-            qos_profile=QoSProfile(
-                depth=1,
-                reliability=ReliabilityPolicy.RELIABLE,
-                history=HistoryPolicy.KEEP_LAST,
-            ),
-        )
-
-        # debug publisher for markers for all holes
+        # debug publisher for markers for holes
         self._hole_marker_publisher = self.create_publisher(
-            Marker,
+            MarkerArray,
             "hole_marker",
             qos_profile=QoSProfile(
                 depth=1,
@@ -208,32 +191,29 @@ class Detector(Node):
         t1 = time.time() - t0
         self.get_logger().debug(f"Capture done [{t1:.2f} s]")
 
-    def holes_to_robot_space_msg_marker(self, hole_lines, hole_ids,
-                                        marker_ns = None,
-                                        marker_color = (1.0, 1.0, 0.0)):
+    def holes_to_robot_space_msg_marker(
+            self, hole_lines, hole_ids, hole_filled,
+            marker_ns=None,
+            marker_color_empty=(1.0, 1.0, 0.0),
+            marker_color_full=(0.0, 0.0, 1.0),
+    ):
         msg_ids = []
         msg_pose1 = []
         msg_pose2 = []
+        msg_filled = []
+        line_width = 0.005
 
         if marker_ns is not None:
-            marker = Marker()
+            c_empty = ColorRGBA(r=marker_color_empty[0],
+                                g=marker_color_empty[1],
+                                b=marker_color_empty[2],
+                                a=1.0)
+            c_full = ColorRGBA(r=marker_color_full[0],
+                               g=marker_color_full[1],
+                               b=marker_color_full[2],
+                               a=1.0)
 
-            marker.header.frame_id = 'lbr_link_0'  # TODO
-            marker.ns = marker_ns
-            marker.id = 0
-            marker.type = Marker.LINE_LIST
-            marker.action = Marker.ADD
-
-            marker.scale.x = 0.01
-            marker.scale.y = 0.01
-            marker.scale.z = 0.01
-
-            marker.color.r = marker_color[0]
-            marker.color.g = marker_color[1]
-            marker.color.b = marker_color[2]
-            marker.color.a = 1.0
-
-            marker.lifetime = DurationMsg(sec=2)
+            marker_array = MarkerArray()
 
         if self.robot_calib is not None:
             robot_a = self.robot_calib['scale'] * self.robot_calib['rot']
@@ -247,21 +227,39 @@ class Detector(Node):
 
                 msg_pose1 += [x[0, 0], x[1, 0], x[2, 0]]
                 msg_pose2 += [x[0, 1], x[1, 1], x[2, 1]]
+                msg_filled += [hole_filled[i]]
 
                 if marker_ns is not None:
+                    marker = Marker()
+                    marker.header.frame_id = 'lbr_link_0'  # TODO
+                    marker.ns = marker_ns
+                    marker.id = i
+                    marker.type = Marker.ARROW
+                    marker.action = Marker.ADD
+                    marker.color = c_full if hole_filled[i] else c_empty
+                    marker.pose.orientation.w = 1.0
+
                     p1 = Point(x=x[0, 0], y=x[1, 0], z=x[2, 0])
                     p2 = Point(x=x[0, 1], y=x[1, 1], z=x[2, 1])
                     marker.points.append(p1)
                     marker.points.append(p2)
 
+                    marker.scale.x = line_width
+                    marker.scale.y = line_width * 3
+                    marker.scale.z = line_width * 4
+                    marker.lifetime = DurationMsg(sec=2)
+
+                    marker_array.markers.append(marker)
+
         msg = Hole()
         msg.id = msg_ids
         msg.pose1 = msg_pose1
         msg.pose2 = msg_pose2
+        msg.filled = msg_filled
         msg.timestamp = self.timestamp.nanosec
 
         if marker_ns is not None:
-            return msg, marker
+            return msg, marker_array
         else:
             return msg
 
@@ -277,16 +275,16 @@ class Detector(Node):
             holder_trn = crb.detect_holder(self.img_u)
 
             if holder_trn is not None:
-                part_lines, part_ids = crb.holder_parts(self.img_u, holder_trn)
+                part_lines, part_ids, part_filled = crb.holder_parts(self.img_u,
+                                                                     holder_trn)
                 self.img_u = crb.holder_remove(self.img_u, holder_trn)
 
                 msg, marker = self.holes_to_robot_space_msg_marker(
-                    part_lines, part_ids, marker_ns='holder_parts')
+                    part_lines, part_ids, part_filled, marker_ns='holder_parts')
 
                 self._holder_part_marker_publisher.publish(marker)
                 self._holder_part_publisher.publish(msg)
                 self.get_logger().debug(f"Holder: {part_ids}")
-
 
         t = time.time()
         seg, img_e, u = crb.detect_all_segments(self.img_u, self.opt, self.mask)
@@ -314,31 +312,23 @@ class Detector(Node):
 
         t0 = time.time()
 
-        hole_lines_empty, hole_ids_empty = [], []
-        hole_lines_full, hole_ids_full = [], []
+        hole_lines, hole_ids, hole_filled = [], [], []
         if rot is not None:
             rng = np.percentile(self.img_u,
                                 [self.opt.diff['perc_min'],
                                  self.opt.diff['perc_max']])
-            hole_lines_full, hole_ids_full, hole_lines_empty, hole_ids_empty = \
-                self.template.check_holes(self.img_u, rot, trn, self.opt, rng)
+            hole_lines, hole_ids, hole_filled = self.template.check_holes(
+                self.img_u, rot, trn, self.opt, rng)
 
         msg, marker = self.holes_to_robot_space_msg_marker(
-            hole_lines_full, hole_ids_full, marker_ns='holes_needed')
+            hole_lines, hole_ids, hole_filled, marker_ns='holes_needed')
 
-        self._hole_needed_marker_publisher.publish(marker)
-        self._hole_needed_publisher.publish(msg)
-
-        msg, marker = self.holes_to_robot_space_msg_marker(
-            hole_lines_empty, hole_ids_empty, marker_ns='holes',
-            marker_color=(0.0, 0.0, 1.0))
-
-        self._hole_publisher.publish(msg)
         self._hole_marker_publisher.publish(marker)
+        self._hole_publisher.publish(msg)
 
         if self.publish_debug:
             img_debug = cv2.cvtColor(self.img_u, cv2.COLOR_GRAY2RGB)
-            blue = img_debug[:,:,2]
+            blue = img_debug[:, :, 2]
             blue[img_e > 0] = 255
 
             for s in seg:
@@ -351,14 +341,11 @@ class Detector(Node):
 
                     cv2.line(img_debug, u1[:, 0], u2[:, 0], (255, 255, 0), 5)
 
-            for l in hole_lines_full:
-                u = l.astype(int)
-                cv2.line(img_debug, u[:, 0], u[:, 1], (55, 255, 0), 5)
-
-            for l in hole_lines_empty:
-                u = l.astype(int)
-                cv2.line(img_debug, u[:, 0], u[:, 1], (0, 255, 255), 5)
-
+            for i in range(len(hole_lines)):
+                u = hole_lines[i].astype(int)
+                cv2.line(img_debug, u[:, 0], u[:, 1],
+                         (55, 255, 0) if hole_filled[i] else (0, 255, 255),
+                         5)
 
             if self.publish_debug_reduce > 1:
                 img_debug = img_debug[
@@ -381,7 +368,8 @@ class Detector(Node):
             plt.imshow(self.img_u, cmap='gray', vmin=0, vmax=255)
             draw.segments(seg)
             if rot is not None:
-                draw.segments(self.template.seg, rot=rot, t=trn, linewidth=2, color='w')
+                draw.segments(self.template.seg, rot=rot, t=trn, linewidth=2,
+                              color='w')
 
             # redraw figures
             plt.gcf().canvas.draw_idle()

@@ -559,11 +559,19 @@ class Template:
 
         return rot1, t1, n_inl, dq
 
+    def crop_pt_to_img(self, pt, img_shape):
+        """Crop points to the image shape."""
+
+        ok = np.logical_and(pt[0] >= 0, pt[0] < img_shape[1])
+        ok = np.logical_and(ok, pt[1] >= 0)
+        ok = np.logical_and(ok, pt[1] < img_shape[0])
+
+        return pt[:, ok]
+
     def check_holes(self, img, rot, t, opt, rng):
-        lines_full = []
-        ids_full = []
-        lines_empty = []
-        ids_empty = []
+        lines = []
+        ids = []
+        filled = []
 
         # TODO maybe better to compute area of dark pixels in hole and
         #  neighbourhood and compare to area of template hole
@@ -571,10 +579,11 @@ class Template:
         for i in range(len(self.hole_pt)):
             # histogram of values inside and outside the hole
             h = (rot @ self.nb_hole_pt[i] + t).astype(int)
-            # TODO check if we are inside
+            h = self.crop_pt_to_img(h, img.shape)
             vals_out = img[h[1], h[0]]
 
             h = (rot @ self.hole_pt[i] + t).astype(int)
+            h = self.crop_pt_to_img(h, img.shape)
             vals_in = img[h[1], h[0]]
 
             val_in = np.percentile(vals_in, opt.diff['perc_in'])
@@ -588,14 +597,11 @@ class Template:
 
             df = val_out - val_in
 
-            if df < opt.diff['thr']:
-                lines_full += [rot @ self.hole_line[i] + t]
-                ids_full += [i]
-            else:
-                lines_empty += [rot @ self.hole_line[i] + t]
-                ids_empty += [i]
+            lines += [rot @ self.hole_line[i] + t]
+            ids += [i]
+            filled += [float(df) < opt.diff['thr']]
 
-        return lines_full, ids_full, lines_empty, ids_empty
+        return lines, ids, filled
 
 
 def im_fit_h(mat_h, w, h):
@@ -1084,6 +1090,7 @@ def icp_points_lines(seg_ref: list[LineSegment], u, rot, trn, opt: Opt):
 
     return rot, trn
 
+
 def detect_holder(img):
     # parameters = cv2.aruco.DetectorParameters()
 
@@ -1141,6 +1148,7 @@ def detect_holder(img):
 def holder_parts(img, trn):
     lines = []
     ids = []
+    filled = []
     delta = 0.02  # TODO part width
     for i in range(len(holder['centers_x'])):
         x = holder['centers_x'][i]
@@ -1152,15 +1160,16 @@ def holder_parts(img, trn):
         u = g.p2e(trn @ g.e2p(um))
 
         uc = u.mean(axis=1).astype(int)
+        lines += [u]
+        ids += [i]
         # TODO detection of filled parts in holder
         w = 10
         thr = 50
-        sample = img[(uc[1]-w):(uc[1]+w), (uc[0]-w):(uc[0]+w)]
-        if sample.mean() > thr:
-            lines += [u]
-            ids += [i]
+        sample = img[(uc[1] - w):(uc[1] + w), (uc[0] - w):(uc[0] + w)]
+        filled += [bool(sample.mean() > thr)]
 
-    return lines, ids
+    return lines, ids, filled
+
 
 def holder_remove(img, trn):
     # TODO remove only outline, not BB.
