@@ -443,8 +443,11 @@ def ransac(num_points, mss, log_prob, support_fcn,
             best_num_inl = num_inl
 
             # stopping criterion based on currently best inlier ratio
-            w = num_inl / num_points
-            N_max = np.ceil(- log_prob / np.log10(1 - w**mss))
+            if num_inl == num_points:
+                N_max = 0
+            else:
+                w = num_inl / num_points
+                N_max = np.ceil(- log_prob / np.log10(1 - w**mss))
 
             logger.good_iteration(iter, 'support = %f (%i of %i), N_max = %i' %
                                     (support, num_inl, num_points, N_max))
