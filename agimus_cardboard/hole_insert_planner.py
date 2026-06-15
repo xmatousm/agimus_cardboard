@@ -18,6 +18,10 @@ class HoleInsertPlanner(HolePlannerBase):
         self.area_color['part_process'] = (0.0, 0.0, 1.0)
         self.area_color['finished'] = (0.5, 0.5, 0.5)
 
+        # gripper test
+        self.gripper(False)
+        self.gripper(True)
+
     def gripper(self, state: bool):
         self.get_logger().debug(f'Setting gripper: {state}')
 
@@ -103,17 +107,4 @@ class HoleInsertPlanner(HolePlannerBase):
         self.get_logger().info("Done")
 
 def main(args=None):
-    node = None
-    try:
-        rclpy.init(args=args)
-        node = HoleInsertPlanner()
-        node.gripper(False)
-        node.gripper(True)
-        while True:
-            node.process()
-
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if node is not None:
-            node.destroy_node()
+    utils.init_spin_node(args, HoleInsertPlanner)

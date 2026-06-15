@@ -270,7 +270,7 @@ class HolePlannerBase(Node):
     def process_one(self):
         raise NotImplementedError
 
-    def process(self):
+    def do_work(self):
         self.get_logger().info("Init")
 
         # working area markers
