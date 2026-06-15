@@ -33,13 +33,20 @@ class HoleSelected:
     hole_id: int
     filled: bool
 
-    def __init__(self, u1, u2, hole_id, filled):
+    def __init__(self, u1, u2, hole_id, filled,
+                 normalize_angle: bool = False):
         self.u1 = u1
         self.u2 = u2
         self.hole_id = hole_id
         self.filled = filled
         self.u = (u1 + u2) / 2
+
         self.angle = float(np.arctan2(u1[1] - u2[1], u1[0] - u2[0]))
+
+        if normalize_angle and (self.angle > np.pi / 2 or
+                                self.angle < -np.pi / 2):
+            self.u1, self.u2 = u2, u1
+            self.angle = float(np.arctan2(u2[1] - u1[1], u2[0] - u1[0]))
 
 
 class HolePlannerBase(Node):
@@ -49,6 +56,8 @@ class HolePlannerBase(Node):
         super().__init__(name)
 
         self._point_id = 0
+        self._last_rpy = [0., 0., 0.]
+        self.rps = 1.0  # radians per second for r, p, y (independently)
 
         # parameters, attributes
         self.param_listener = hole_planner_params.ParamListener(self)
@@ -70,7 +79,7 @@ class HolePlannerBase(Node):
 
             'normal': {
                 'speed': self.params.speed,
-                'duration': 2.0,  # TODO min duration -> param
+                'duration': None,
                 'goal_tolerance': self.params.goal_tolerance,
                 'w_pose': get_weights(self.params.w_pose, 6),
             },
@@ -160,6 +169,18 @@ class HolePlannerBase(Node):
     def send_point_nowait(self, goal, name):
         self._point_id += 1
 
+        rpy_delta = np.max(np.abs(np.array(self._last_rpy) -
+                                  np.array(goal.goal.rot_rpy)))
+
+        if rpy_delta > 0.0:
+            rot_duration_min = rpy_delta / self.rps
+            if goal.goal.duration < 0:
+                goal.goal.duration = rot_duration_min
+            else:
+                goal.goal.duration = max(rot_duration_min, goal.goal.duration)
+
+        self._last_rpy = goal.goal.rot_rpy
+
         self.get_logger().info(f"Sending goal {self._point_id}:{name}")
 
         goal.goal.id = self._point_id
@@ -198,7 +219,8 @@ class HolePlannerBase(Node):
             return False
         return True
 
-    def _select_hole(self, topic: str, filled=None, hole_id=None
+    def _select_hole(self, topic: str, filled=None, hole_id=None,
+                     normalize_angle: bool = False
                      ) -> Optional[HoleSelected]:
         ids, u1s, u2s, is_filled = self._holes[topic]
         if len(ids) < 1:
@@ -214,7 +236,8 @@ class HolePlannerBase(Node):
             if hole_id is not None and ids[i] != hole_id:
                 continue
 
-            hs = HoleSelected(u1s[:, i], u2s[:, i], ids[i], is_filled[i])
+            hs = HoleSelected(u1s[:, i], u2s[:, i], ids[i], is_filled[i],
+                              normalize_angle)
 
             if self._in_range(hs.u1, hs.angle) and self._in_range(hs.u2,
                                                                   hs.angle):
@@ -222,19 +245,36 @@ class HolePlannerBase(Node):
 
         return None
 
-    def read_select_hole(self, topic: str, filled=None,
-                         hole_id=None) -> HoleSelected:
-        while True:
-            while self._holes[topic] is None:
-                rclpy.spin_once(self)
-                self.get_logger().info(f'Waiting for a {topic}')
+    def read_select_hole_optional(self, topic: str, filled=None,
+                                  hole_id=None, normalize_angle: bool = False,
+                                  ) -> Optional[HoleSelected]:
 
-            hole_sel = self._select_hole(topic, filled=filled, hole_id=hole_id)
+        # waits for the message, returns selected hole or none
+        while self._holes[topic] is None:
+            self.get_logger().info(f'Waiting for a {topic}')
+            rclpy.spin_once(self)
+
+        hole_sel = self._select_hole(topic, filled=filled, hole_id=hole_id,
+                                     normalize_angle=normalize_angle)
+
+        return hole_sel
+
+    def read_select_hole(self, topic: str, filled=None,
+                         hole_id=None, normalize_angle: bool = False,
+                         ) -> HoleSelected:
+        # waits for the message and for the selected hole
+        while True:
+            hole_sel = self.read_select_hole_optional(
+                topic, filled=filled, hole_id=hole_id,
+                normalize_angle=normalize_angle)
 
             if hole_sel is not None:
                 return hole_sel
             else:
                 self.clean_holes(topic)
+
+    def current_hole_ids(self, topic: str) -> list[int]:
+        return self._holes[topic][0]
 
     def publish_working_area(self, key: str):
         marker = Marker()
@@ -279,6 +319,7 @@ class HolePlannerBase(Node):
 
         # move to the initial pose
         self._point_id = -1
+        self._last_rpy = [0., 0., 0.]
         self.send_one_point(self.init_pose, 0.0, 'normal', 'out')
 
         # clean all detected holes; they should be visible now
