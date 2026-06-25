@@ -103,6 +103,8 @@ class HolePlannerBase(Node):
             goal_tolerance_boost=self.params.goal_tolerance_boost,
             goal_weight_boost=self.params.goal_weight_boost)
 
+        self.seg_line.reg_q = self.params.reg_q
+
         # subscribers for detected holes
         self._holes = {}  # buffer for hole message
         self._subscribers = {}
@@ -161,7 +163,6 @@ class HolePlannerBase(Node):
         line_builder.LineCartesianSpace().to_goal(self.seg_line, g)
 
         g.rot_rpy = [0.0, 3.1415, angle]  # TODO move into to_goal
-        print(">>>>", angle, flush=True)
         g.w_pose = list(gpar['w_pose'])
 
         return goal

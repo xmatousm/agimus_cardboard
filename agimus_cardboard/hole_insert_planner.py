@@ -1,15 +1,21 @@
+import argparse
 import numpy as np
 import rclpy
 from agimus_controller_mod_ros import node_utils as utils
 from std_srvs.srv import SetBool
 from .hole_planner_base import HolePlannerBase, HoleSelected
 
+
 class HoleInsertPlanner(HolePlannerBase):
     """"""
 
-    def __init__(self):
+    def __init__(self, mode: str = 'parts'):
+        # only_holes = True - no parts are grabbed, only navigate to holes
+        # to check for accuracy
+
         super().__init__("hole_insert_planner", ['hole', 'holder_part'])
 
+        self.mode = mode
         self.srv_gripper = utils.service_client(self, SetBool,
                                                 "schunk_gripper/activate")
         self.area_color['hole_wait'] = (1.0, 0.0, 0.0)
@@ -21,6 +27,11 @@ class HoleInsertPlanner(HolePlannerBase):
         # gripper test
         self.gripper(False)
         self.gripper(True)
+
+        if self.mode == 'holes':
+            self.gripper(False)
+
+        self.get_logger().info(f"Mode: {self.mode}")
 
     def gripper(self, state: bool):
         self.get_logger().debug(f'Setting gripper: {state}')
@@ -39,7 +50,11 @@ class HoleInsertPlanner(HolePlannerBase):
 
         # take one part
         self.publish_working_area('part_wait')
-        part_sel = self.read_select_hole('holder_part', filled=True)
+        if self.mode == 'holes':
+            part_sel = self.read_select_hole('holder_part')
+        else:
+            part_sel = self.read_select_hole('holder_part', filled=True)
+
         pu, angle = part_sel.u, part_sel.angle
         self.publish_working_area('part_process')
 
@@ -53,10 +68,12 @@ class HoleInsertPlanner(HolePlannerBase):
         self.clean_holes()
 
         # close the gripper, increase weights, then move down and grab
-        self.gripper(True)
+        if not self.mode == 'holes':
+            self.gripper(True)
         self.send_one_point(pu, angle, 'prepare', "part up+", dz=dz_up)
         self.send_one_point(pu, angle, 'hole', "part down", dz=dz_dn_part)
-        self.gripper(False)
+        if not self.mode == 'holes':
+            self.gripper(False)
 
         # move up then decrease weights
         self.send_one_point(pu, angle, 'hole', "part up+", dz=dz_up)
@@ -82,23 +99,34 @@ class HoleInsertPlanner(HolePlannerBase):
         # move above the hole beginning
         self.send_one_point(p, angle_h, 'normal', "up-", dz=dz_up)
 
-        # check if the part is not there (and clean parts for the next run)
-        self.publish_working_area('part_wait')
-        part_sel = self.read_select_hole('holder_part', hole_id=part_sel.hole_id)
+        if self.mode == 'holes':
+            part_sel.filled = False
+        else:
+            # check if the part is not there (and clean parts for the next run)
+            self.publish_working_area('part_wait')
+            part_sel = self.read_select_hole('holder_part',
+                                             hole_id=part_sel.hole_id)
+
         self.publish_working_area('hole_process')
 
         if part_sel.filled:
             self.get_logger().error(f"Grab failed, part: {part_sel.hole_id}")
         else:
-            # increase weights, move down, and release
-            self.send_one_point(p, angle_h, 'prepare', "up+", dz=dz_up)
-            self.send_one_point(p, angle_h, 'prepare', "mid+", dz=dz_up / 2)
-            self.send_one_point(p, angle_h, 'hole', "dn", dz=dz_dn_hole)
-            self.gripper(True)
+            if self.mode == 'parts':
+                # just throw it
+                self.gripper(True)
+            else:
+                # increase weights, move down, and release
+                self.send_one_point(p, angle_h, 'prepare', "up+", dz=dz_up)
+                self.send_one_point(p, angle_h, 'prepare', "mid+", dz=dz_up / 2)
+                self.send_one_point(p, angle_h, 'hole', "dn", dz=dz_dn_hole)
+                if not self.mode == 'holes':
+                    self.gripper(True)
 
-            # move up, decrease weights
-            self.send_one_point(p, angle_h, 'hole', "up", dz=dz_up)
-            self.send_one_point(p, angle_h, 'normal_weights', "up-", dz=dz_up)
+                # move up, decrease weights
+                self.send_one_point(p, angle_h, 'hole', "up", dz=dz_up)
+                self.send_one_point(p, angle_h, 'normal_weights', "up-",
+                                    dz=dz_up)
 
         # half-way back
         self.send_one_point(p_half, angle_half, 'normal', "half", dz=dz_up)
@@ -106,5 +134,9 @@ class HoleInsertPlanner(HolePlannerBase):
         self.publish_working_area('finished')
         self.get_logger().info("Done")
 
+
 def main(args=None):
+    parser = argparse.ArgumentParser("detector")
+    parser.add_argument("--mode", type=str)
+
     utils.init_spin_node(args, HoleInsertPlanner)
