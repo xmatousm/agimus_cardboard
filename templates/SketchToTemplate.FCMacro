@@ -1,0 +1,160 @@
+"""FreeCAD macro to export a cardboard template yaml definition file."""
+import FreeCAD as App
+import Part
+import math
+import os.path
+import sys
+
+
+def get_by_label(doc_, label):
+    """Get a document object by its label."""
+    for o in doc_.Objects:
+        if o.Label == label:
+            return o
+    return None
+
+
+def get_by_label_list(doc_, label):
+    """Get a list of document objects with a label starting by given string."""
+    l = []
+    for o in doc_.Objects:
+        if o.Label.startswith(label):
+            l += [o]
+    return l
+
+
+def add_geom_line(rows_, x1, y1=None, x2=None, y2=None):
+    """Export a line segment."""
+    if y1 is None:
+        geom = x1
+        x1 = geom.StartPoint.x
+        y1 = geom.StartPoint.y
+        x2 = geom.EndPoint.x
+        y2 = geom.EndPoint.y
+
+    y1 = -y1  # templates use coordinate system aligned with image (y-inverted)
+    y2 = -y2
+
+    rows_ += [f"- [{x1 / 1000:.3f}, {x2 / 1000:.3f},"]
+    rows_ += [f"   {y1 / 1000:.3f}, {y2 / 1000:.3f}]"]
+    rows_ += [""]
+
+
+def is_axis(geom):
+    """Check if the line segment is a coordinate axis."""
+    if not isinstance(geom, Part.LineSegment):
+        return False
+
+    # The axes are inserted into ext. geometries, we need to filter them out.
+    if geom.StartPoint.x == 0.0 and geom.StartPoint.y == 0.0 and geom.StartPoint.z == 0.0:
+        if geom.EndPoint.x == 1.0 and geom.EndPoint.y == 0.0 and geom.EndPoint.z == 0.0:
+            return True
+        if geom.EndPoint.x == 0.0 and geom.EndPoint.y == 1.0 and geom.EndPoint.z == 0.0:
+            return True
+    return False
+
+
+def hole_line(obj, rows, rows_shapes, rows_sizes):
+    """Export a single linear hole."""
+
+    edges = obj.Geometry + [e for e in obj.ExternalGeo if not is_axis(e)]
+
+    if len(edges) != 2:
+        raise Exception(f"Wrong number of objects in {obj.Label}: {len(edges)}")
+
+    # hole line between midpoints of two edges
+    add_geom_line(rows,
+                  x1=(edges[0].StartPoint.x + edges[0].EndPoint.x) / 2,
+                  y1=(edges[0].StartPoint.y + edges[0].EndPoint.y) / 2,
+                  x2=(edges[1].StartPoint.x + edges[1].EndPoint.x) / 2,
+                  y2=(edges[1].StartPoint.y + edges[1].EndPoint.y) / 2)
+    # hole width derived from the length of the first edge
+    sz = math.sqrt((edges[0].StartPoint.x - edges[0].EndPoint.x)**2 +
+                   (edges[0].StartPoint.y - edges[0].EndPoint.y)**2)
+    rows_sizes += [f"- {sz / 1000:.3f}"]
+    rows_shapes += [f"- line"]
+
+
+def hole_circle(geom, rows, rows_shapes, rows_sizes):
+    """Export a single circular hole."""
+
+    r = geom.Radius
+    x = geom.Center.x
+    y = geom.Center.y
+
+    dy = 1.0  # TODO
+
+    # hole line between midpoints of two edges
+    add_geom_line(rows, x, y + dy, x, y - dy)
+
+    rows_sizes += [f"- {2 * r / 1000:.3f}"]
+    rows_shapes += [f"- circle"]
+
+
+def main(doc):
+    """Main program - do the export on the given freecad document object."""
+
+    rows = []
+    seg = 0
+    holes = 0
+
+    # export outline composed of line segments
+    obj = get_by_label(doc, 'Outline')
+    if obj is None:
+        raise Exception("No outline.")
+
+    rows += ['seg:']
+
+    edges = obj.Geometry + [e for e in obj.ExternalGeo if not is_axis(e)]
+    for g in edges:
+        add_geom_line(rows, g)
+        seg += 1
+
+    # export holes (coordinates, types, sizes)
+    rows += ['hole:']
+    rows_shapes = ['hole_shape:']
+    rows_sizes = ['hole_size:']
+
+    for obj in get_by_label_list(doc, 'HoleLine'):
+        holes += 1
+        hole_line(obj, rows, rows_shapes, rows_sizes)
+
+    obj = get_by_label(doc, 'HoleCircle')  # all circles are in a single sketch
+    if obj is not None:
+        geoms = obj.Geometry + [e for e in obj.ExternalGeo if not is_axis(e)]
+        for g in geoms:
+            if not isinstance(g, Part.Circle):
+                raise Exception("Only circles expected in HoleCircle sketch.")
+            holes += 1
+            hole_circle(g, rows, rows_shapes, rows_sizes)
+
+    rows += rows_shapes + [""] + rows_sizes
+
+    # write YAML file
+    output_file = os.path.splitext(doc.FileName)[0] + ".yml"
+
+    with open(output_file, "w") as fh:
+        for r in rows:
+            print(r, file=fh)
+
+    print(f"Exported {seg} segments and {holes} holes to {output_file}")
+
+
+# main
+doc_ = App.ActiveDocument
+batch = False
+
+if doc_ is None:
+    # open document
+    file = sys.argv[-1]
+    if not file.endswith(".FCStd"):
+        raise Exception(
+            "No active document and the last argument is not a .FCStd file.")
+    doc_ = App.openDocument(file)
+    batch = True
+
+main(doc_)
+
+if batch:
+    App.closeDocument(doc_.Name)
+    sys.exit(0)
