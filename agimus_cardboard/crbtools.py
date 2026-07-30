@@ -603,6 +603,10 @@ class Template:
 
         return lines, ids, filled
 
+def opt_update(opt: Opt, tmpl: Template):
+    opt.segment['min_length'] = tmpl.min_segment_len() * opt.segment[
+        'min_length_rel']
+    opt.hough_p['minLineLength'] = opt.segment['min_length']
 
 def im_fit_h(mat_h, w, h):
     """Update homography and image sizes."""
@@ -1114,9 +1118,6 @@ def detect_holder(img):
 
     if c1 is None or c2 is None:
         return None
-
-    plt.plot(c1[0], c1[1], '.')
-    plt.plot(c2[0], c2[1], '.')
 
     c = np.hstack((c1, c2))
 
