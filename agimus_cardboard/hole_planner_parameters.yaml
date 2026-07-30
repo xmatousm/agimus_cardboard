@@ -10,6 +10,36 @@ hole_planner_params:
     default_value: 0.05
     description: "Point above the hole to be made."
 
+  shake_part:
+    type: double
+    default_value: 0.00
+    description: "Amount of shaking when grabbing a part."
+
+  shake_duration_part:
+    type: double
+    default_value: 0.00
+    description: "Durationof shaking when grabbing a part."
+
+  dz_part:
+    type: double
+    default_value: 0.00
+    description: "Amount of going down when grabbing a part."
+
+  shake_hole:
+    type: double
+    default_value: 0.00
+    description: "Amount of shaking inside hole."
+
+  shake_duration_hole:
+    type: double
+    default_value: 0.00
+    description: "Durationof shaking when inserting a part."
+
+  dz_hole:
+    type: double
+    default_value: 0.00
+    description: "Amount of going down when inserting a part."
+
   speed:
     type: double
     default_value: 0.05

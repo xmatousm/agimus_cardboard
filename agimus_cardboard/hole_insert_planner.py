@@ -3,13 +3,19 @@ import numpy as np
 import rclpy
 from agimus_controller_mod_ros import node_utils as utils
 from std_srvs.srv import SetBool
-from .hole_planner_base import HolePlannerBase, HoleSelected
+from .hole_planner_base import HolePlannerBase
+
+from agimus_controller_mod.trajectories.shake_insert import ShakeInsert
+from agimus_controller_mod_msgs.action import TrajectoryAction
+
+import \
+    agimus_controller_mod_ros.trajectory_builders.shake_insert as shake_builder
 
 
 class HoleInsertPlanner(HolePlannerBase):
     """"""
 
-    def __init__(self, mode: str = 'parts'):
+    def __init__(self, mode: str = 'full'):
         # only_holes = True - no parts are grabbed, only navigate to holes
         # to check for accuracy
 
@@ -24,6 +30,8 @@ class HoleInsertPlanner(HolePlannerBase):
         self.area_color['part_process'] = (0.0, 0.0, 1.0)
         self.area_color['finished'] = (0.5, 0.5, 0.5)
 
+        gpar = self.goal_param['hole']
+
         # gripper test
         self.gripper(False)
         self.gripper(True)
@@ -32,6 +40,11 @@ class HoleInsertPlanner(HolePlannerBase):
             self.gripper(False)
 
         self.get_logger().info(f"Mode: {self.mode}")
+        self.seg_shake = ShakeInsert(self.ee_frame_name)
+        self.seg_shake.weights = self.weights
+        self.seg_shake.weights.w_end_effector_poses[self.ee_frame_name] = \
+            gpar['w_pose']
+
 
     def gripper(self, state: bool):
         self.get_logger().debug(f'Setting gripper: {state}')
@@ -42,11 +55,25 @@ class HoleInsertPlanner(HolePlannerBase):
         future = self.srv_gripper.call_async(request)
         rclpy.spin_until_future_complete(self, future)
 
+    def one_shake(self, p, angle: float, dz: float, amount: float,
+                  duration: float):
+        goal = TrajectoryAction.Goal()
+        g = goal.goal
+
+        self.seg_shake.shake_amount = amount
+        self.seg_shake.x_from = p
+        self.seg_shake.x_to = p
+        self.seg_shake.delta_z = dz
+        self.seg_shake.duration = duration
+
+        shake_builder.ShakeInsert().to_goal(self.seg_shake, g)
+
+        g.rot_rpy = [0.0, 3.1415, angle]  # TODO move into to_goal
+        return goal
+
     def process_one(self):
 
         dz_up = self.params.delta_z
-        dz_dn_part = - 0.01  # TODO param - some pressure to correctly grab the part
-        dz_dn_hole = - 0.01  # TODO param - additional pressure
 
         # take one part
         self.publish_working_area('part_wait')
@@ -67,11 +94,19 @@ class HoleInsertPlanner(HolePlannerBase):
         # cardboard is visible now, clean holes, so the actual data will be used next
         self.clean_holes()
 
-        # close the gripper, increase weights, then move down and grab
+        # close the gripper, increase weights, then move down, shake, and grab
         if not self.mode == 'holes':
             self.gripper(True)
         self.send_one_point(pu, angle, 'prepare', "part up+", dz=dz_up)
-        self.send_one_point(pu, angle, 'hole', "part down", dz=dz_dn_part)
+        self.send_one_point(pu, angle, 'hole', "part down",
+                            dz=-self.params.dz_part)
+
+        if self.params.shake_part != 0.0:
+            g = self.one_shake(pu, angle, dz=-self.params.dz_part,
+                               amount=self.params.shake_part,
+                               duration=self.params.shake_duration_part)
+            self.send_point(g, "dn_shake")
+
         if not self.mode == 'holes':
             self.gripper(False)
 
@@ -116,11 +151,20 @@ class HoleInsertPlanner(HolePlannerBase):
                 # just throw it
                 self.gripper(True)
             else:
-                # increase weights, move down, and release
+                # increase weights, move down, shake a bit
                 self.send_one_point(p, angle_h, 'prepare', "up+", dz=dz_up)
                 self.send_one_point(p, angle_h, 'prepare', "mid+", dz=dz_up / 2)
-                self.send_one_point(p, angle_h, 'hole', "dn", dz=dz_dn_hole)
+                self.send_one_point(p, angle_h, 'hole', "dn",
+                                    dz=-self.params.dz_hole)
+
+                if self.params.shake_hole != 0.0:
+                    g = self.one_shake(p, angle_h, dz=-self.params.dz_hole,
+                                       amount=self.params.shake_hole,
+                                       duration=self.params.shake_duration_hole)
+                    self.send_point(g, "dn_shake")
+
                 if not self.mode == 'holes':
+                    # release
                     self.gripper(True)
 
                 # move up, decrease weights
