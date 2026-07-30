@@ -7,3 +7,17 @@ detector_params:
     publish_debug_reduce:
       type: int
       description: "Reduce ratio of debug images."
+    base_frame:
+      type: string
+      description: "Base frame ID"
+    color:
+      empty:
+        type: double_array
+      full:
+        type: double_array
+      edge:
+        type: double_array
+      template:
+        type: double_array
+      edge_points:
+        type: double_array

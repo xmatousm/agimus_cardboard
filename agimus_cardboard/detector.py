@@ -23,11 +23,6 @@ import geometry.basic as gb
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 from std_msgs.msg import ColorRGBA
-import matplotlib.pyplot as plt
-import matplotlib
-
-matplotlib.use('qtagg')
-
 
 class Detector(Node):
     """"""
@@ -55,6 +50,24 @@ class Detector(Node):
         self.opt = crb.Opt()
         self.is_debug = self.get_logger().is_enabled_for(LoggingSeverity.DEBUG)
         self.detect_holder = detect_holder
+
+        clist = ['empty', 'full', 'edge', 'template', 'edge_points']
+        clr = self.params.detector.color
+        self.color_u8 = {
+            k: (int(getattr(clr, k)[0] * 255),
+                int(getattr(clr, k)[1] * 255),
+                int(getattr(clr, k)[2] * 255)
+                ) for k in clist
+        }
+
+        self.color_rgba = {
+            k: ColorRGBA(r=getattr(clr, k)[0],
+                         g=getattr(clr, k)[1],
+                         b=getattr(clr, k)[2],
+                         a=1.0
+                         ) for k in clist
+        }
+
         # template
         with open(calib_file, 'r') as fh:
             calib_data = yaml.load(fh, Loader=yaml.SafeLoader)
@@ -67,10 +80,17 @@ class Detector(Node):
 
         tmpl_m = crb.TemplateMetric.from_dict(tmpl_dict)
         tmpl = crb.Template.from_metric(calib_u, self.opt, tmpl_m)
+        crb.opt_update(self.opt, tmpl)
         self.template = tmpl
 
         # draw template if in debug mode
         if self.is_debug:
+            import matplotlib.pyplot as plt
+            import matplotlib
+            self.plt = plt
+
+            matplotlib.use('qtagg')
+
             plt.ion()
             plt.figure(1)
             draw.template_metric(tmpl_m, plt.gca())
@@ -81,7 +101,7 @@ class Detector(Node):
             plt.pause(0.01)
 
         # robot calibration
-        self.robot_calib = None
+        self.robot_calib: Optional[dict] = None
         if robot_calib_file is not None:
             with open(robot_calib_file, 'r') as fh:
                 data = yaml.load(fh, Loader=yaml.SafeLoader)
@@ -166,12 +186,12 @@ class Detector(Node):
             f"  template pairs: {len(self.template.pairs)}\n")
 
         self.mask = None
-        self.t0 = self.get_clock().now().nanoseconds / 1e9
-        self.t = self.t0
+        self.t0: float = self.get_clock().now().nanoseconds / 1e9
+        self.t: float = self.t0
 
     def image_callback(self, msg_in: MsgImage):
         assert not self.camera_embedded
-        cur_t = self.get_clock().now().nanoseconds / 1e9
+        cur_t: float = self.get_clock().now().nanoseconds / 1e9
         self.timestamp = msg_in.header.stamp
         self.t = self.timestamp.sec + self.timestamp.nanosec / 1e9
 
@@ -193,27 +213,15 @@ class Detector(Node):
 
     def holes_to_robot_space_msg_marker(
             self, hole_lines, hole_ids, hole_filled,
-            marker_ns=None,
-            marker_color_empty=(1.0, 1.0, 0.0),
-            marker_color_full=(0.0, 0.0, 1.0),
-    ):
+            marker_ns: str
+    ) -> tuple[Hole, MarkerArray]:
         msg_ids = []
         msg_pose1 = []
         msg_pose2 = []
         msg_filled = []
         line_width = 0.005
 
-        if marker_ns is not None:
-            c_empty = ColorRGBA(r=marker_color_empty[0],
-                                g=marker_color_empty[1],
-                                b=marker_color_empty[2],
-                                a=1.0)
-            c_full = ColorRGBA(r=marker_color_full[0],
-                               g=marker_color_full[1],
-                               b=marker_color_full[2],
-                               a=1.0)
-
-            marker_array = MarkerArray()
+        marker_array = MarkerArray()
 
         if self.robot_calib is not None:
             robot_a = self.robot_calib['scale'] * self.robot_calib['rot']
@@ -229,27 +237,27 @@ class Detector(Node):
                 msg_pose2 += [x[0, 1], x[1, 1], x[2, 1]]
                 msg_filled += [hole_filled[i]]
 
-                if marker_ns is not None:
-                    marker = Marker()
-                    marker.header.frame_id = 'lbr_link_0'  # TODO
-                    marker.ns = marker_ns
-                    marker.id = i
-                    marker.type = Marker.ARROW
-                    marker.action = Marker.ADD
-                    marker.color = c_full if hole_filled[i] else c_empty
-                    marker.pose.orientation.w = 1.0
+                marker = Marker()
+                marker.header.frame_id = self.params.detector.base_frame
+                marker.ns = marker_ns
+                marker.id = i
+                marker.type = Marker.ARROW
+                marker.action = Marker.ADD
+                marker.color = self.color_rgba[
+                    'full' if hole_filled[i] else 'empty']
+                marker.pose.orientation.w = 1.0
 
-                    p1 = Point(x=x[0, 0], y=x[1, 0], z=x[2, 0])
-                    p2 = Point(x=x[0, 1], y=x[1, 1], z=x[2, 1])
-                    marker.points.append(p1)
-                    marker.points.append(p2)
+                p1 = Point(x=x[0, 0], y=x[1, 0], z=x[2, 0])
+                p2 = Point(x=x[0, 1], y=x[1, 1], z=x[2, 1])
+                marker.points.append(p1)
+                marker.points.append(p2)
 
-                    marker.scale.x = line_width
-                    marker.scale.y = line_width * 3
-                    marker.scale.z = line_width * 4
-                    marker.lifetime = DurationMsg(sec=2)
+                marker.scale.x = line_width
+                marker.scale.y = line_width * 3
+                marker.scale.z = line_width * 4
+                marker.lifetime = DurationMsg(sec=2)
 
-                    marker_array.markers.append(marker)
+                marker_array.markers.append(marker)
 
         msg = Hole()
         msg.id = msg_ids
@@ -258,10 +266,7 @@ class Detector(Node):
         msg.filled = msg_filled
         msg.timestamp = self.timestamp.nanosec
 
-        if marker_ns is not None:
-            return msg, marker_array
-        else:
-            return msg
+        return msg, marker_array
 
     def image_process(self):
         self.get_logger().debug(f"Processing")
@@ -328,23 +333,29 @@ class Detector(Node):
 
         if self.publish_debug:
             img_debug = cv2.cvtColor(self.img_u, cv2.COLOR_GRAY2RGB)
+            red = img_debug[:, :, 0]
+            green = img_debug[:, :, 1]
             blue = img_debug[:, :, 2]
-            blue[img_e > 0] = 255
+            red[img_e > 0] = self.color_u8['edge_points'][0]
+            green[img_e > 0] = self.color_u8['edge_points'][1]
+            blue[img_e > 0] = self.color_u8['edge_points'][2]
 
             for s in seg:
-                cv2.line(img_debug, s.u1[:, 0], s.u2[:, 0], (255, 0, 0), 15)
+                cv2.line(img_debug, s.u1[:, 0], s.u2[:, 0],
+                         self.color_u8['edge'], 15)
 
             if rot is not None:
                 for s in self.template.seg:
                     u1 = (rot @ s.u1 + trn).astype(int)
                     u2 = (rot @ s.u2 + trn).astype(int)
 
-                    cv2.line(img_debug, u1[:, 0], u2[:, 0], (255, 255, 0), 5)
+                    cv2.line(img_debug, u1[:, 0], u2[:, 0],
+                             self.color_u8['template'], 5)
 
             for i in range(len(hole_lines)):
                 u = hole_lines[i].astype(int)
                 cv2.line(img_debug, u[:, 0], u[:, 1],
-                         (55, 255, 0) if hole_filled[i] else (0, 255, 255),
+                         self.color_u8['full' if hole_filled[i] else 'empty'],
                          5)
 
             if self.publish_debug_reduce > 1:
@@ -363,17 +374,17 @@ class Detector(Node):
         self.get_logger().debug(f"")
 
         if self.is_debug:
-            plt.figure(3)
-            plt.clf()
-            plt.imshow(self.img_u, cmap='gray', vmin=0, vmax=255)
+            self.plt.figure(3)
+            self.plt.clf()
+            self.plt.imshow(self.img_u, cmap='gray', vmin=0, vmax=255)
             draw.segments(seg)
             if rot is not None:
                 draw.segments(self.template.seg, rot=rot, t=trn, linewidth=2,
                               color='w')
 
             # redraw figures
-            plt.gcf().canvas.draw_idle()
-            plt.gcf().canvas.start_event_loop(0.01)
+            self.plt.gcf().canvas.draw_idle()
+            self.plt.gcf().canvas.start_event_loop(0.01)
 
 
 def main(args=None):
