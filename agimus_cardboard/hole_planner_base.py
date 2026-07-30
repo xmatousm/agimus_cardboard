@@ -97,11 +97,11 @@ class HolePlannerBase(Node):
             },
         }
 
-        self.seg_line = LineSegmentCartesianSpace(
-            self.ee_frame_name,
-            self.weights,
-            goal_tolerance_boost=self.params.goal_tolerance_boost,
-            goal_weight_boost=self.params.goal_weight_boost)
+        self.seg_line = LineSegmentCartesianSpace(self.ee_frame_name)
+
+        self.seg_line.weights = self.weights
+        self.seg_line.goal_tolerance_boost=self.params.goal_tolerance_boost
+        self.seg_line.goal_weight_boost=self.params.goal_weight_boost
 
         self.seg_line.reg_q = self.params.reg_q
 
@@ -149,12 +149,15 @@ class HolePlannerBase(Node):
         else:
             self._holes[topic] = None
 
-    def one_point(self, p, angle, key: str, dz: float = 0.0):
+    def one_point(self, p, angle, key: str,
+                  dx: float = 0.0, dy: float = 0.0, dz: float = 0.0):
         goal = TrajectoryAction.Goal()
         g = goal.goal
         gpar = self.goal_param[key]
 
         self.seg_line.x_to = p.copy()
+        self.seg_line.x_to[0] += dx
+        self.seg_line.x_to[1] += dy
         self.seg_line.x_to[2] += dz
         self.seg_line.goal_tolerance = gpar['goal_tolerance']
         self.seg_line.velocity = gpar['speed']
@@ -208,8 +211,9 @@ class HolePlannerBase(Node):
         result_future = self.send_point_nowait(goal, name)
         self.wait_for_result(result_future)
 
-    def send_one_point(self, p, angle, key: str, name: str, dz: float = 0.0):
-        self.send_point(self.one_point(p, angle, key, dz), name)
+    def send_one_point(self, p, angle, key: str, name: str,
+                       dx: float = 0.0, dy: float = 0.0, dz: float = 0.0):
+        self.send_point(self.one_point(p, angle, key, dx, dy, dz), name)
 
     def _in_range(self, u, angle) -> bool:
         if not (self.params.x_min < u[0] < self.params.x_max):
