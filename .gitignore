@@ -1,0 +1,4 @@
+# Generated parameter module symlinks
+agimus_cardboard/camera_parameters.py
+agimus_cardboard/detector_parameters.py
+agimus_cardboard/hole_planner_parameters.py
