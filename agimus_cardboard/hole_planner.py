@@ -21,16 +21,14 @@ class HolePlanner(HolePlannerBase):
 
         gpar = self.goal_param['hole']
 
-        self.seg_saw = SawLineSegmentCartesianSpace(
-            self.ee_frame_name,
-            self.weights,
-            tooth_length=self.params.saw_length,
-            tooth_tip=np.array([0.0, 0.0, self.params.saw_height]))
+        self.seg_saw = SawLineSegmentCartesianSpace(self.ee_frame_name)
+        self.seg_saw.weights = self.weights
+        self.seg_saw.tooth_length=self.params.saw_length
+        self.seg_saw.tooth_tip=np.array([0.0, 0.0, self.params.saw_height])
         self.seg_saw.velocity = gpar['speed']
         self.seg_saw.weights.w_end_effector_poses[self.ee_frame_name] = \
             gpar['w_pose']
 
-        self.saw_height = self.params.saw_height
         self.saw_begin = self.params.saw_begin
         self.saw_end = self.params.saw_end
 
