@@ -15,15 +15,16 @@ import \
 class HoleInsertPlanner(HolePlannerBase):
     """"""
 
-    def __init__(self, mode: str = 'full'):
+    def __init__(self, robot_name: str, mode: str = 'full'):
         # only_holes = True - no parts are grabbed, only navigate to holes
         # to check for accuracy
 
-        super().__init__("hole_insert_planner", ['hole', 'holder_part'])
+        super().__init__("hole_insert_planner", robot_name,
+                         ['hole', 'holder_part'])
 
         self.mode = mode
-        self.srv_gripper = utils.service_client(self, SetBool,
-                                                "schunk_gripper/activate")
+        self.srv_gripper = utils.service_client(
+            self, SetBool, f"{robot_name}/schunk_gripper/activate")
         self.area_color['hole_wait'] = (1.0, 0.0, 0.0)
         self.area_color['hole_process'] = (0.0, 1.0, 1.0)
         self.area_color['part_wait'] = (1.0, 0.5, 0.0)
@@ -44,7 +45,6 @@ class HoleInsertPlanner(HolePlannerBase):
         self.seg_shake.weights = self.weights
         self.seg_shake.weights.w_end_effector_poses[self.ee_frame_name] = \
             gpar['w_pose']
-
 
     def gripper(self, state: bool):
         self.get_logger().debug(f'Setting gripper: {state}')
@@ -182,5 +182,6 @@ class HoleInsertPlanner(HolePlannerBase):
 def main(args=None):
     parser = argparse.ArgumentParser("detector")
     parser.add_argument("--mode", type=str)
+    parser.add_argument("--robot_name", type=str)
 
-    utils.init_spin_node(args, HoleInsertPlanner)
+    utils.init_spin_node(args, HoleInsertPlanner, parser)

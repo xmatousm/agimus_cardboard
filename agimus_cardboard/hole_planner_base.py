@@ -52,7 +52,7 @@ class HoleSelected:
 class HolePlannerBase(Node):
     """"""
 
-    def __init__(self, name: str, hole_topic_list: list[str]):
+    def __init__(self, name: str, robot_name: str, hole_topic_list: list[str]):
         super().__init__(name)
 
         self._point_id = 0
@@ -135,7 +135,7 @@ class HolePlannerBase(Node):
 
         # client for trajectory actions
         self._action_client = ActionClient(self, TrajectoryAction,
-                                           'trajectory_goal')
+                                           f'{robot_name}/trajectory_goal')
 
     def _holes_callback(self, topic, msg_in: Hole):
         self._holes[topic] = [msg_in.id, msg_in.pose1, msg_in.pose2,

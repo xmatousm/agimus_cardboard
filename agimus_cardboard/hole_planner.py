@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 from agimus_controller_mod_ros import node_utils as utils
 from .hole_planner_base import HolePlannerBase, HoleSelected
@@ -12,8 +13,8 @@ import \
 class HolePlanner(HolePlannerBase):
     """"""
 
-    def __init__(self):
-        super().__init__("hole_planner", ["hole"])
+    def __init__(self, robot_name: str):
+        super().__init__("hole_planner", robot_name, ["hole"])
 
         self.area_color['hole_wait'] = (1.0, 0.0, 0.0)
         self.area_color['hole_process'] = (0.0, 1.0, 1.0)
@@ -127,4 +128,6 @@ class HolePlanner(HolePlannerBase):
 
 
 def main(args=None):
-    utils.init_spin_node(args, HolePlanner)
+    parser = argparse.ArgumentParser("detector")
+    parser.add_argument("--robot_name", type=str)
+    utils.init_spin_node(args, HolePlanner, parser)
