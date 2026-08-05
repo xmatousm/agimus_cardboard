@@ -24,11 +24,13 @@ from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 from std_msgs.msg import ColorRGBA
 
+
 class Detector(Node):
     """"""
 
-    def __init__(self, template_file: str,
+    def __init__(self,
                  calib_file: str,
+                 template_file: Optional[str] = None,
                  robot_calib_file: Optional[str] = None,
                  simulate_file: Optional[str] = None,
                  mask_file: Optional[str] = None,
@@ -75,30 +77,34 @@ class Detector(Node):
         calib = crb.Calib.from_dict(calib_data)
         calib_u = calib.get_undistorted()
 
-        with open(template_file, 'r') as fh:
-            tmpl_dict = yaml.load(fh, Loader=yaml.SafeLoader)
+        if template_file is not None:
+            with open(template_file, 'r') as fh:
+                tmpl_dict = yaml.load(fh, Loader=yaml.SafeLoader)
 
-        tmpl_m = crb.TemplateMetric.from_dict(tmpl_dict)
-        tmpl = crb.Template.from_metric(calib_u, self.opt, tmpl_m)
-        crb.opt_update(self.opt, tmpl)
-        self.template = tmpl
+            tmpl_m = crb.TemplateMetric.from_dict(tmpl_dict)
+            tmpl = crb.Template.from_metric(calib_u, self.opt, tmpl_m)
+            crb.opt_update(self.opt, tmpl)
+            self.template = tmpl
 
-        # draw template if in debug mode
-        if self.is_debug:
-            import matplotlib.pyplot as plt
-            import matplotlib
-            self.plt = plt
+            # draw template if in debug mode
+            if self.is_debug:
+                import matplotlib.pyplot as plt
+                import matplotlib
+                self.plt = plt
 
-            matplotlib.use('qtagg')
+                matplotlib.use('qtagg')
 
-            plt.ion()
-            plt.figure(1)
-            draw.template_metric(tmpl_m, plt.gca())
+                plt.ion()
+                plt.figure(1)
+                draw.template_metric(tmpl_m, plt.gca())
 
-            plt.figure(2)
-            draw.template(tmpl, plt.gca())
+                plt.figure(2)
+                draw.template(tmpl, plt.gca())
 
-            plt.pause(0.01)
+                plt.pause(0.01)
+
+        else:
+            self.template = None
 
         # robot calibration
         self.robot_calib: Optional[dict] = None
@@ -182,8 +188,10 @@ class Detector(Node):
             f"  camera={'embedded' if self.camera_embedded else 'topic'}\n" +
             f"  robot calib={'yes' if self.robot_calib is not None else 'no'}\n" +
             f"  debug={self.publish_debug}\n" +
-            f"  template segments: {len(self.template.seg)}\n" +
-            f"  template pairs: {len(self.template.pairs)}\n")
+            (f"  template segments: {len(self.template.seg)}\n" +
+             f"  template pairs: {len(self.template.pairs)}\n"
+             if self.template is not None else "")
+        )
 
         self.mask = None
         self.t0: float = self.get_clock().now().nanoseconds / 1e9
@@ -291,6 +299,9 @@ class Detector(Node):
                 self._holder_part_publisher.publish(msg)
                 self.get_logger().debug(f"Holder: {part_ids}")
 
+        if self.template is None:
+            return
+
         t = time.time()
         seg, img_e, u = crb.detect_all_segments(self.img_u, self.opt, self.mask)
         t1 = time.time() - t
@@ -395,7 +406,7 @@ def main(args=None):
         args = rclpy.utilities.remove_ros_args(args)
 
         parser = argparse.ArgumentParser("detector")
-        parser.add_argument("--template-file", type=str, required=True)
+        parser.add_argument("--template-file", type=str, required=False)
         parser.add_argument("--calib-file", type=str, required=True)
         parser.add_argument("--robot-calib-file", type=str, required=False)
         parser.add_argument("--simulate-file", type=str, required=False)
