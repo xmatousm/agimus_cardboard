@@ -6,38 +6,38 @@ import os.path
 import sys
 
 
-def get_by_label(doc_, label):
+def get_by_label(doc, label):
     """Get a document object by its label."""
-    for o in doc_.Objects:
+    for o in doc.Objects:
         if o.Label == label:
             return o
     return None
 
 
-def get_by_label_list(doc_, label):
+def get_by_label_list(doc, label):
     """Get a list of document objects with a label starting by given string."""
     l = []
-    for o in doc_.Objects:
+    for o in doc.Objects:
         if o.Label.startswith(label):
             l += [o]
     return l
 
 
-def add_geom_line(rows_, x1, y1=None, x2=None, y2=None):
+def add_geom_line(rows, x1, y1=None, x2=None, y2=None):
     """Export a line segment."""
     if y1 is None:
         geom = x1
-        x1 = geom.StartPoint.x
-        y1 = geom.StartPoint.y
-        x2 = geom.EndPoint.x
-        y2 = geom.EndPoint.y
+        x1: float = geom.StartPoint.x
+        y1: float = geom.StartPoint.y
+        x2: float = geom.EndPoint.x
+        y2: float = geom.EndPoint.y
 
     y1 = -y1  # templates use coordinate system aligned with image (y-inverted)
     y2 = -y2
 
-    rows_ += [f"- [{x1 / 1000:.3f}, {x2 / 1000:.3f},"]
-    rows_ += [f"   {y1 / 1000:.3f}, {y2 / 1000:.3f}]"]
-    rows_ += [""]
+    rows += [f"- [{x1 / 1000:.4f}, {x2 / 1000:.4f},"]
+    rows += [f"   {y1 / 1000:.4f}, {y2 / 1000:.4f}]"]
+    rows += [""]
 
 
 def is_axis(geom):
@@ -78,7 +78,7 @@ def hole_line(obj, rows, rows_shapes, rows_sizes):
 def hole_circle(geom, rows, rows_shapes, rows_sizes):
     """Export a single circular hole."""
 
-    r = geom.Radius
+    r: float = geom.Radius
     x = geom.Center.x
     y = geom.Center.y
 
@@ -118,6 +118,9 @@ def main(doc):
     for obj in get_by_label_list(doc, 'HoleLine'):
         holes += 1
         hole_line(obj, rows, rows_shapes, rows_sizes)
+
+    if holes == 0:
+        rows += [""]
 
     obj = get_by_label(doc, 'HoleCircle')  # all circles are in a single sketch
     if obj is not None:
