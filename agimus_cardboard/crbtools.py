@@ -8,11 +8,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import geometry.all as g
+from agimus_cardboard import draw as draw
 from mathlib.optimize import ransac
 from mathlib.types import VectorI, ColVector3, RowVector, Matrix33, Matrix, \
     Matrix2N
-
-from agimus_cardboard import draw as draw
 
 holder_aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 
@@ -31,6 +30,8 @@ def _req(data: dict[str, Any], *key: str, dtype: type = float):
 
     for k in key:
         assert k in data, f"missing {k} in the dict"
+        if type(data[k]) == type(None):
+            continue
         assert type(data[k]) is dtype, \
             f"type of {k} should be {dtype} not {type(data[k])}"
 
@@ -147,7 +148,7 @@ class Opt:
     diff = {
         # percentiles for the actual intensity range
         'perc_min': 10,
-        'perc_max': 90,
+        'perc_max': 99,
 
         # percentiles for the inside and the outside of a hole
         'perc_in': 50,
@@ -281,8 +282,13 @@ class Calib():
         mat_h = self.mat_k @ rot.T @ np.linalg.inv(self.mat_k)
         self.mat_h, self.w_h, self.h_h = im_fit_h(mat_h, self.w, self.h)
 
-        e12 = np.array([[1, 0], [0, 1], [0, 0]])
-        self.mat_h0 = np.linalg.inv(self.mat_k @ np.hstack((e12, self.t_vec)))
+        # e12 = np.array([[1, 0], [0, 1], [0, 0]])
+        # self.mat_h0 = np.linalg.inv(self.mat_k @ np.hstack((e12, self.t_vec)))
+
+        r12 = rot[:, :2]
+
+        self.mat_h0 = np.linalg.inv(
+            self.mat_h @ self.mat_k @ np.hstack((r12, self.t_vec)))
 
     def transform_image_to(self, calib_to: 'Calib', img):
         if calib_to.dist is not None:
@@ -408,11 +414,13 @@ class TemplateMetric:
         _req(data, 'hole_shape', dtype=list)
         _req(data, 'hole_size', dtype=list)
 
-        for i in range(len(data['hole'])):
-            u = np.array(data['hole'][i]).reshape((2, -1))
-            tmpl.hole_line += [u]
-            tmpl.hole_shape += [data['hole_shape'][i]]
-            tmpl.hole_size += [data['hole_size'][i]]
+        if data['hole'] is not None:
+            # an empty list is loaded as None
+            for i in range(len(data['hole'])):
+                u = np.array(data['hole'][i]).reshape((2, -1))
+                tmpl.hole_line += [u]
+                tmpl.hole_shape += [data['hole_shape'][i]]
+                tmpl.hole_size += [data['hole_size'][i]]
 
         return tmpl
 
@@ -423,6 +431,7 @@ class Template:
         self.nb_hole_pt = []
         self.hole_line = []
         self.hole_polygon = []
+        self.origin = np.array([[0.0], [0.0]])
 
         # template segments and pairs
 
@@ -519,7 +528,8 @@ class Template:
         return tmpl
 
     @classmethod
-    def from_metric(cls, calib_u: Calib, opt: Opt, tmpl_m: TemplateMetric
+    def from_metric(cls, calib_u: Calib, opt: Opt, tmpl_m: TemplateMetric,
+                    fix_origin=True
                     ) -> "Template":
         """Create a new template from a metric template."""
 
@@ -529,15 +539,26 @@ class Template:
             u = g.p2e(h0_inv @ g.e2p(s))
             seg += [u]
 
+        if fix_origin:
+            # find template image origin, update all to have positive coordinates
+            u_all = np.hstack(seg)
+            origin = u_all.min(axis=1).astype(int).reshape((2, 1))
+
+            for i in range(len(seg)):
+                seg[i] = seg[i] - origin
+        else:
+            origin = np.array([[0.0], [0.0]])
+
         tmpl = cls(opt, seg=seg)
+        tmpl.origin = origin
 
         for i in range(len(tmpl_m.hole_line)):
-            u = g.p2e(h0_inv @ g.e2p(tmpl_m.hole_line[i]))
+            u = g.p2e(h0_inv @ g.e2p(tmpl_m.hole_line[i])) - origin
             tmpl.hole_line += [u]
 
             p, p_ngh = tmpl_m.hole_polygon(i)
-            u = g.p2e(h0_inv @ g.e2p(p))
-            u_ngh = g.p2e(h0_inv @ g.e2p(p_ngh))
+            u = g.p2e(h0_inv @ g.e2p(p)) - origin
+            u_ngh = g.p2e(h0_inv @ g.e2p(p_ngh)) - origin
             tmpl.hole_polygon += [(u, u_ngh)]
 
             tmpl.hole_pt += [pixels_in_convex_polygon(u)]
@@ -603,10 +624,12 @@ class Template:
 
         return lines, ids, filled
 
+
 def opt_update(opt: Opt, tmpl: Template):
     opt.segment['min_length'] = tmpl.min_segment_len() * opt.segment[
         'min_length_rel']
-    opt.hough_p['minLineLength'] = opt.segment['min_length']
+    opt.hough_p['minLineLength'] = opt.segment['min_length'] / 2
+
 
 def im_fit_h(mat_h, w, h):
     """Update homography and image sizes."""
@@ -849,7 +872,7 @@ def detect_all_segments(img_u, opt: Opt, mask=None, ax_detect=None
     # edges detection
     img_e, u_e = edges(img_u, opt)
     if ax_detect is not None:
-        ax_detect.plot(u_e[0], u_e[1], '.')
+        ax_detect.plot(u_e[0], u_e[1], '.', markersize=1)
 
     if mask is not None:
         img_e = img_e * mask
