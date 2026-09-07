@@ -29,7 +29,7 @@ def a2r(a: Vector3) -> Matrix33:
     :returns: rotation matrix (3x3, orthonormal, det = +1)
     """
 
-    alpha_q = a[0] ** 2 + a[1] ** 2 + a[2] ** 2
+    alpha_q = a[0]**2 + a[1]**2 + a[2]**2
 
     if alpha_q < _EPS:
         # do not divide, sin(alpha)/alpha = 1, 1-cos(alpha) = 0,
@@ -72,7 +72,7 @@ def aa2r(a: Union[Vector3, list, tuple], alpha: float) -> Matrix33:
     """
 
     # normalize the axis to unit length
-    len_q = a[0] ** 2 + a[1] ** 2 + a[2] ** 2
+    len_q = a[0]**2 + a[1]**2 + a[2]**2
     a = a / np.sqrt(len_q)
 
     # skew-symmetric matrix from the axis
@@ -200,7 +200,7 @@ def mnz(mat: Matrix) -> Matrix:
     :returns: the matrix scaled to have unit Frobenius norm.
     """
 
-    return mat / np.sqrt((mat ** 2).sum())
+    return mat / np.sqrt((mat**2).sum())
 
 
 def normalize_coords_sd(x: Matrix) -> (Matrix, Matrix, float, Vector):
@@ -234,7 +234,7 @@ def normalize_coords_sd(x: Matrix) -> (Matrix, Matrix, float, Vector):
     xd = x + d
 
     # mean distance to one
-    lenq = (xd ** 2).sum(axis=0)
+    lenq = (xd**2).sum(axis=0)
     s = 1 / np.sqrt(lenq.mean())
     y = s * xd
 
@@ -298,6 +298,48 @@ def elem_homo(steps: Union[list, tuple]):
                 raise NotImplementedError('Wrong key ' + str(key))
 
     return homo
+
+
+def r2aa(rot: Matrix33):
+    """Rotation matrix to the axis-angle (inverted Rodrigues' formula).
+
+    :param rot: 3x3 rotation (orthogonal) matrix
+
+    :returns: tuple of rotation axis and the angle of rotation around the axis
+    """
+
+    # Can be solved using logm(R) (excluding rotation by 0 and pi), but
+    # the following is faster.
+
+    assert np.linalg.det(rot) > 0, \
+        'Rotation matrix must have positive unit determinant'
+
+    # To derive the following, examine Rodrigues' rotation formula for R - R':
+    #   R - R' = 2 * sqc( a ) * sin( alpha )
+    # and for Tr(R):
+    #   trace( R ) = 1 - 2 * cos( alpha )
+
+    sa = np.array([rot[2, 1] - rot[1, 2],
+                   rot[0, 2] - rot[2, 0],
+                   rot[1, 0] - rot[0, 1]]) / 2  # sin_alpha * ax
+
+    sin_alpha = np.sqrt((sa**2).sum())
+    cos_alpha = (np.trace(rot) - 1) / 2
+
+    # if cos_alpha < -0.9999:  maybe not needed
+    #    raise NotImplementedError(
+    #        f'r2aa not implemented for rotations near pi (cos={cos_alpha}).')
+
+    if sin_alpha == 0:  # hard zero test suffices (see note bellow)
+        a = np.array([1, 0, 0])
+    else:
+        a = sa / sin_alpha
+        # This has standard accuracy for alpha > sqrt(realmin). Then the
+        # accuracy smoothly degrades as alpha approaches sqrt(eps(0)). For
+        # alpha <= sqrt(eps(0)) we compute sin_alpha = 0 because of the square.
+        # Overall, the accuracy of 'sa' here is better than using EIG.
+
+    return a, np.atan2(sin_alpha, cos_alpha)
 
 
 def rot(angle: float) -> Matrix22:
@@ -437,7 +479,7 @@ def u2l_norm(u1: Matrix2N, u2: Matrix2N) -> Matrix3N:
     a = u1[1] - u2[1]
     b = u2[0] - u1[0]
     c = u1[0] * u2[1] - u1[1] * u2[0]
-    n = np.sqrt(a ** 2 + b ** 2)
+    n = np.sqrt(a**2 + b**2)
 
     return np.vstack((a / n, b / n, c / n))
 
@@ -473,7 +515,7 @@ def vlen(x: Matrix) -> Vector:
     :returns: vector of N lengths (norms)
     """
 
-    return np.sqrt((x ** 2).sum(axis=0))
+    return np.sqrt((x**2).sum(axis=0))
 
 
 def vlenq(x: Matrix) -> Vector:
@@ -486,7 +528,7 @@ def vlenq(x: Matrix) -> Vector:
 
     :returns: vector of N squared lengths (norms)
     """
-    return (x ** 2).sum(axis=0)
+    return (x**2).sum(axis=0)
 
 
 def vnz(x: Matrix) -> Matrix:
@@ -500,7 +542,7 @@ def vnz(x: Matrix) -> Matrix:
     :returns: matrix of the vectors from x, each scaled to unit length
     """
 
-    return x / np.sqrt((x ** 2).sum(axis=0))
+    return x / np.sqrt((x**2).sum(axis=0))
 
 
 def vnzsub(x: Matrix) -> Matrix:
@@ -515,7 +557,7 @@ def vnzsub(x: Matrix) -> Matrix:
               [0:D-1] has unit length
     """
 
-    return x / np.sqrt((x[:-1] ** 2).sum(axis=0))
+    return x / np.sqrt((x[:-1]**2).sum(axis=0))
 
 
 def xyz2r(a: Vector3) -> Matrix33:
