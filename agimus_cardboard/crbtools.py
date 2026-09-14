@@ -605,6 +605,10 @@ class Template:
 
             h = (rot @ self.hole_pt[i] + t).astype(int)
             h = self.crop_pt_to_img(h, img.shape)
+
+            if h.shape[1] == 0:
+                continue
+
             vals_in = img[h[1], h[0]]
 
             val_in = np.percentile(vals_in, opt.diff['perc_in'])
