@@ -15,6 +15,11 @@ hole_planner_params:
     default_value: 0.00
     description: "Amount of shaking when grabbing a part."
 
+  shake_part_threshold:
+    type: double
+    default_value: 0.00
+    description: "Goal error when shaking is needed."
+
   shake_duration_part:
     type: double
     default_value: 0.00
@@ -25,10 +30,20 @@ hole_planner_params:
     default_value: 0.00
     description: "Amount of going down when grabbing a part."
 
+  push_part:
+    type: double
+    default_value: 0.00
+    description: "Additional move down to push when inserting a part."
+
   shake_hole:
     type: double
     default_value: 0.00
     description: "Amount of shaking inside hole."
+
+  shake_hole_threshold:
+    type: double
+    default_value: 0.00
+    description: "Goal error when shaking is needed."
 
   shake_duration_hole:
     type: double
@@ -40,53 +55,79 @@ hole_planner_params:
     default_value: 0.00
     description: "Amount of going down when inserting a part."
 
-  speed:
+  push_hole:
     type: double
-    default_value: 0.05
-    description: "Cartesian speed in m/s."
-
-  speed_hole:
-    type: double
-    default_value: 0.05
-    description: "Cartesian speed in the hole."
+    default_value: 0.00
+    description: "Additional move down to push when inserting a part."
 
   ee_frame_name:
     type: string
     description: "End-effector name."
     validation:
       not_empty<>: []
-  w_q:
-    type: double_array
-    default_value: [1.0]
-    description: "Weights for joint configuration cost."
-  w_qdot:
-    type: double_array
-    default_value: [0.1]
-    description: "Weights for joint velocity cost."
-  w_qddot:
-    type: double_array
-    default_value: [0.0001]
-    description: "Weights for joint acceleration cost."
-  w_robot_effort:
-    type: double_array
-    default_value: [0.001]
-    description: "Weights for control cost."
-  w_pose:
-    type: double_array
-    default_value: [0.1]
-    description: "Weights for end-effector position cost."
-  w_pose_prepare:
-    type: double_array
-    default_value: [0.1]
-    description: "Weights for end-effector position cost."
-  w_pose_hole:
-    type: double_array
-    default_value: [0.1]
-    description: "Weights for end-effector position cost."
+
   reg_q:
     type: double_array
     default_value: [0.0]
     description: "Configuration regularizer."
+
+  param_struct: &param_struct
+    w_q:
+      type: double_array
+      default_value: [-1.0]
+      description: "Weights for joint configuration cost."
+    w_qdot:
+      type: double_array
+      default_value: [-1.0]
+      description: "Weights for joint velocity cost."
+    w_qddot:
+      type: double_array
+      default_value: [-1.0]
+      description: "Weights for joint acceleration cost."
+    w_robot_effort:
+      type: double_array
+      default_value: [-1.0]
+      description: "Weights for control cost."
+    w_pose:
+      type: double_array
+      default_value: [-1.0]
+      description: "Weights for end-effector position cost."
+    speed:
+      type: double
+      default_value: 0.05
+      description: "Cartesian speed [m/s]."
+    duration:
+      type: double
+      default_value: -1.0
+      description: "Minimal duration [s]."
+    goal_tolerance:
+      type: double
+      default_value: 0.0
+      description: "Distance to goal tolerance."
+    goal_tolerance_boost:
+      type: double
+      default_value: 1.0
+      description: "Tolerance multiplier when approaching the goal."
+    goal_weight_boost:
+      type: double
+      default_value: 1.0
+      description: "Pose weight multiplier when approaching the goal."
+
+  params_normal:
+    <<: *param_struct
+    description: "Weights and parameters for normal movement."
+
+  params_prepare:
+    <<: *param_struct
+    description: "Weights and parameters for preparation before hole treatment."
+
+  params_pre_hole:
+    <<: *param_struct
+    description: "Weights and parameters for preliminary hole motion."
+
+  params_hole:
+    <<: *param_struct
+    description: "Weights and parameters for hole treatment."
 
   saw_length:
     type: double
@@ -107,24 +148,6 @@ hole_planner_params:
     type: double
     default_value: 0.0
     description: "Ending offset of saw line."
-
-  goal_tolerance:
-    type: double
-    default_value: 0.0
-    description: "Distance to goal tolerance."
-  goal_tolerance_boost:
-    type: double
-    default_value: 1.0
-    description: "Tolerance multiplier when approaching the goal."
-  goal_weight_boost:
-    type: double
-    default_value: 1.0
-    description: "Pose weight multiplier when approaching the goal."
-
-  goal_tolerance_prepare:
-    type: double
-    default_value: 0.0
-    description: "Distance to goal tolerance."
 
   x_min:
     type: double

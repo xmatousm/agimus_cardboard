@@ -14,6 +14,8 @@ from visualization_msgs.msg import Marker
 from builtin_interfaces.msg import Duration as DurationMsg
 from geometry_msgs.msg import Point
 
+from agimus_controller.trajectory import TrajectoryPointWeights
+
 from agimus_controller_mod.trajectories.line_cartesian_space import \
     LineSegmentCartesianSpace
 
@@ -49,6 +51,31 @@ class HoleSelected:
             self.angle = float(np.arctan2(u2[1] - u1[1], u2[0] - u1[0]))
 
 
+@dataclass
+class GoalParam:
+    speed: Optional[float]
+    duration: Optional[float]
+    goal_tolerance: float
+    goal_tolerance_boost: float
+    goal_weight_boost: float
+    weights: TrajectoryPointWeights
+
+    def __init__(self, sub_params,
+                 nq, ee_frame_name: str,
+                 default=None):
+        self.speed = sub_params.speed
+        self.duration = sub_params.duration
+        self.goal_tolerance = sub_params.goal_tolerance
+        self.goal_tolerance_boost = sub_params.goal_tolerance_boost
+        self.goal_weight_boost = sub_params.goal_weight_boost
+
+        # not defined weights are copied from the default
+        self.weights = get_all_weights(
+            sub_params, nq,
+            ee_frame_name,
+            default)
+
+
 class HolePlannerBase(Node):
     """"""
 
@@ -67,41 +94,29 @@ class HolePlannerBase(Node):
         self.init_pose = np.array(self.params.init_pose)
         self.ee_frame_name = self.params.ee_frame_name
 
-        self.weights = get_all_weights(self.params, 7, self.ee_frame_name)
+        nq = 7  # TODO
 
-        self.goal_param = {
-            'normal_weights': {  # change of weights at the same pos
-                'speed': self.params.speed,
-                'duration': 0.5,  # TODO min duration -> param
-                'goal_tolerance': self.params.goal_tolerance,
-                'w_pose': get_weights(self.params.w_pose, 6),
-            },
-
-            'normal': {
-                'speed': self.params.speed,
-                'duration': None,
-                'goal_tolerance': self.params.goal_tolerance,
-                'w_pose': get_weights(self.params.w_pose, 6),
-            },
-            'prepare': {
-                'speed': self.params.speed,
-                'duration': None,
-                'goal_tolerance': self.params.goal_tolerance_prepare,
-                'w_pose': get_weights(self.params.w_pose_prepare, 6)
-            },
-            'hole': {
-                'speed': self.params.speed_hole,
-                'duration': None,
-                'goal_tolerance': 0.0,
-                'w_pose': get_weights(self.params.w_pose_hole, 6),
-            },
+        self.goal_param: dict[str, GoalParam] = {
+            # change of weights at the same pos
+            #'normal_weights': GoalParam(self.params.weights, nq,
+            #                            self.ee_frame_name,
+            #                            default=self.params.weights),
+            #    duration=0.5,  # TODO min duration -> param
+            'normal': GoalParam(self.params.params_normal, nq,
+                                self.ee_frame_name),
+            'prepare': GoalParam(self.params.params_prepare, nq,
+                                self.ee_frame_name,
+                                 default=self.params.params_normal),
+            'pre_hole': GoalParam(self.params.params_pre_hole, nq,
+                                 self.ee_frame_name,
+                                 default=self.params.params_normal),
+            'hole': GoalParam(self.params.params_hole, nq,
+                                 self.ee_frame_name,
+                                 default=self.params.params_normal),
         }
 
         self.seg_line = LineSegmentCartesianSpace(self.ee_frame_name)
-
-        self.seg_line.weights = self.weights
-        self.seg_line.goal_tolerance_boost=self.params.goal_tolerance_boost
-        self.seg_line.goal_weight_boost=self.params.goal_weight_boost
+        # some self.seg_line parameters set later using goal parameters
 
         self.seg_line.reg_q = self.params.reg_q
 
@@ -159,14 +174,16 @@ class HolePlannerBase(Node):
         self.seg_line.x_to[0] += dx
         self.seg_line.x_to[1] += dy
         self.seg_line.x_to[2] += dz
-        self.seg_line.goal_tolerance = gpar['goal_tolerance']
-        self.seg_line.velocity = gpar['speed']
-        self.seg_line.duration = gpar['duration']
+        self.seg_line.goal_tolerance = gpar.goal_tolerance
+        self.seg_line.velocity = gpar.speed
+        self.seg_line.duration = gpar.duration
+        self.seg_line.weights = gpar.weights
+        self.seg_line.goal_tolerance_boost = gpar.goal_tolerance_boost
+        self.seg_line.goal_weight_boost = gpar.goal_weight_boost
 
         line_builder.LineCartesianSpace().to_goal(self.seg_line, g)
 
         g.rot_rpy = [0.0, 3.1415, angle]  # TODO move into to_goal
-        g.w_pose = list(gpar['w_pose'])
 
         return goal
 
@@ -201,19 +218,22 @@ class HolePlannerBase(Node):
         result_future = goal_handle.get_result_async()
         return result_future
 
-    def wait_for_result(self, result_future):
+    def wait_for_result(self, result_future) -> TrajectoryAction.Result:
         rclpy.spin_until_future_complete(self, result_future)
 
         result = result_future.result().result
         self.get_logger().debug(f'Result: {result}')
+        return result
 
-    def send_point(self, goal, name):
+    def send_point(self, goal, name) -> float:
         result_future = self.send_point_nowait(goal, name)
-        self.wait_for_result(result_future)
+        result = self.wait_for_result(result_future)
+        return result.distance
 
     def send_one_point(self, p, angle, key: str, name: str,
-                       dx: float = 0.0, dy: float = 0.0, dz: float = 0.0):
-        self.send_point(self.one_point(p, angle, key, dx, dy, dz), name)
+                       dx: float = 0.0, dy: float = 0.0,
+                       dz: float = 0.0) -> float:
+        return self.send_point(self.one_point(p, angle, key, dx, dy, dz), name)
 
     def _in_range(self, u, angle) -> bool:
         if not (self.params.x_min < u[0] < self.params.x_max):
@@ -256,7 +276,7 @@ class HolePlannerBase(Node):
 
         # waits for the message, returns selected hole or none
         while self._holes[topic] is None:
-            self.get_logger().info(f'Waiting for a {topic}')
+            self.get_logger().warning(f'Waiting for a {topic}')
             rclpy.spin_once(self)
 
         hole_sel = self._select_hole(topic, filled=filled, hole_id=hole_id,
