@@ -96,6 +96,7 @@ class Camera(Node):
                                     exposure_us=exposure_us,
                                     packet_size=self.params.camera.packet_size,
                                     gain=self.params.camera.gain,
+                                    grayscale=True,
                                     logger=self.get_logger())
 
             self.get_logger().info(

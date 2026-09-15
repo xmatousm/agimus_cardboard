@@ -1,4 +1,5 @@
 from typing import Optional
+import cv2
 from pypylon import pylon, genicam
 from datetime import datetime
 import logging
@@ -17,14 +18,42 @@ class CameraBasler:
             device_index: Optional[int] = None,
             serial_number: Optional[str] = None,
             exposure_us: int = -1,
-            # manual exposure in microseconds (negative keeps current)
-            log_exposure_changes: bool = True,
-            # control info logging when exposure changes
             packet_size: int = 1500,
             gain: int = 0,
-            logger = None
+            grayscale: bool = False,
+            logger=None,
     ):
+        """Connect to a Basler camera and configure it.
 
+        A diagnostic frame is grabbed and the camera and frame parameters are
+        logged.
+
+        Either device_index or serial_number must be provided; serial_number
+        takes precedence if both are given.
+
+        Connection attempts retry until successful. The camera remains open.
+
+        :param device_index: Zero-based index in the enumerated camera list.
+
+        :param serial_number: Camera serial number,
+
+        :param exposure_us: Manual exposure in microseconds; nonpositive value
+            leave the current exposure settings unchanged.
+
+        :param packet_size: GigE packet size in bytes; nonpositive value skip
+                packet-size configuration; use this for USB cameras.
+
+        :param gain: Raw manual gain; negative value sets continuous auto gain.
+
+        :param grayscale: If True, capture_image converts frames through BGR8 to
+                single-channel, 8-bit grayscale. Otherwise, all frames are
+                converted to three-channel BGR8.
+
+        :param logger: Logger to use, or None to use the default module logger.
+
+        :raises RuntimeError: camera selector is not supplied, or the initial
+                diagnostic frame cannot be captured.
+        """
         self.logger = (
           logger if logger is not None else logging.getLogger(__name__)
         )
@@ -32,9 +61,10 @@ class CameraBasler:
         self.device_index = device_index
         self.serial_number = serial_number
         self.exposure_us = exposure_us
-        self.log_exposure_changes = log_exposure_changes
         self.camera = None
-        self.converter = None
+        self.grayscale = grayscale
+        self.converter = pylon.ImageFormatConverter()
+        self.converter.OutputPixelFormat = pylon.PixelType_BGR8packed
         self.packet_size = packet_size
         self.gain = gain
         self.logger.info("Connecting to Basler camera:")
@@ -176,12 +206,11 @@ class CameraBasler:
                 # write the value
                 if genicam.IsWritable(node):
                     node.SetValue(int(exp))
-                    if self.log_exposure_changes:
-                        if exp != exposure_us:
-                            self.logger.info(
-                                f"Exposure snapped to grid: min={exp_min} inc={inc} → {exp} µs")
-                        else:
-                            self.logger.info(f"Exposure set to {exp} µs")
+                    if exp != exposure_us:
+                        self.logger.info(
+                            f"Exposure snapped to grid: min={exp_min} inc={inc} → {exp} µs")
+                    else:
+                        self.logger.info(f"Exposure set to {exp} µs")
                     self.exposure_us = exp
                 else:
                     self.logger.warning(
@@ -236,10 +265,16 @@ class CameraBasler:
         return None
 
     def capture_image(self):
-        """Grab a frame and return it as a NumPy array."""
+        """Return three-channel BGR8, or single-channel 8-bit grayscale.
+
+        All frames pass through BGR8 conversion. Return None if grabbing fails.
+        """
         result = self._grab_one()
         if result is not None:
-            return result.GetArray()
+            img = self.converter.Convert(result).GetArray()
+            if self.grayscale:
+                return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            return img
         else:
             return None
 
