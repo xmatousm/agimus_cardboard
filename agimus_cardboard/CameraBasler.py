@@ -84,7 +84,9 @@ class CameraBasler:
                     factory.CreateDevice(selected))
                 info = self.camera.GetDeviceInfo()
                 self.camera.Open()
-                self.camera.GevSCPSPacketSize.SetValue(self.packet_size)
+                if self.packet_size > 0:
+                    self.camera.GevSCPSPacketSize.SetValue(self.packet_size)
+
                 if self.gain < 0:
                     self.camera.GainAuto.SetValue("Continuous")
                 else:
@@ -93,8 +95,9 @@ class CameraBasler:
 
                 logger.info(
                     f"Connected to: {info.GetModelName()} ({info.GetSerialNumber()})")
-                logger.info(
-                    f"Packet size: {self.camera.GevSCPSPacketSize.GetValue()}")
+                if self.packet_size > 0:
+                    logger.info(
+                        f"Packet size: {self.camera.GevSCPSPacketSize.GetValue()}")
                 break
 
             except (pylon.RuntimeException, genicam.RuntimeException) as e:
@@ -214,6 +217,9 @@ class CameraBasler:
             #print(time.time() - t, flush=True)
             if result.GrabSucceeded():
                 img = result.GetArray()
+                print("PixelFormat:", self.camera.PixelFormat.GetValue(), flush=True)
+                print("PixelType:", result.GetPixelType(), flush=True)
+                print("Array:", img.shape, img.dtype, flush=True)
         except Exception as e:
             logger.error(f"Failed to capture image: {str(e)}")
         return img
