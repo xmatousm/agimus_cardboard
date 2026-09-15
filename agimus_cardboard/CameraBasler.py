@@ -1,12 +1,11 @@
+from typing import Optional
 from pypylon import pylon, genicam
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 import time
 
 wait_time = 30  # seconds between retries
 log_interval = 1800  # seconds between logging the same error
-
-logger = logging.getLogger(__name__)
 
 class CameraBasler:
     # TODO: the camera should stay open after setting the parameters.
@@ -15,15 +14,21 @@ class CameraBasler:
 
     def __init__(
             self,
-            device_index: int = None,
-            serial_number: str = None,
+            device_index: Optional[int] = None,
+            serial_number: Optional[str] = None,
             exposure_us: int = -1,
             # manual exposure in microseconds (negative keeps current)
             log_exposure_changes: bool = True,
             # control info logging when exposure changes
             packet_size: int = 1500,
             gain: int = 0,
+            logger = None
     ):
+
+        self.logger = (
+          logger if logger is not None else logging.getLogger(__name__)
+        )
+
         self.device_index = device_index
         self.serial_number = serial_number
         self.exposure_us = exposure_us
@@ -32,14 +37,25 @@ class CameraBasler:
         self.converter = None
         self.packet_size = packet_size
         self.gain = gain
-        logger.info("Connecting to Basler camera:")
+        self.logger.info("Connecting to Basler camera:")
         if self.serial_number is not None:
-            logger.info(f"  serial number: {self.serial_number}")
+            self.logger.info(f"  serial number: {self.serial_number}")
         if self.device_index is not None:
-            logger.info(f"  device index: {self.device_index}")
+            self.logger.info(f"  device index: {self.device_index}")
         if self.exposure_us > 0:
-            logger.info(f"  exposure: {self.exposure_us} µs")
+            self.logger.info(f"  exposure: {self.exposure_us} µs")
         self._connect_camera()
+
+        # Capture one image and log its properties
+
+        result = self._grab_one()
+        if result is None:
+            raise RuntimeError("Cannot grab an image")
+        img = result.GetArray()
+
+        self.logger.info(f"PixelFormat:  {self.camera.PixelFormat.GetValue()}")
+        self.logger.info(f"PixelType: {result.GetPixelType()}")
+        self.logger.info(f"Array: {img.shape}, {img.dtype}")
 
     def _connect_camera(self):
         while True:
@@ -51,7 +67,7 @@ class CameraBasler:
                 devices = factory.EnumerateDevices()
                 if not devices:
                     if self._should_log_error('no_devices'):
-                        logger.error(
+                        self.logger.error(
                             f"No Basler cameras found. Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
                     continue
@@ -63,14 +79,14 @@ class CameraBasler:
                     if selected is None:
                         if self._should_log_error(
                                 f'serial_{self.serial_number}'):
-                            logger.error(
+                            self.logger.error(
                                 f"Camera with serial '{self.serial_number}' not found. Retrying in {wait_time} seconds...")
                         time.sleep(wait_time)
                         continue
                 elif self.device_index is not None:
                     if self.device_index >= len(devices):
                         if self._should_log_error(f'index_{self.device_index}'):
-                            logger.error(
+                            self.logger.error(
                                 f"Camera index {self.device_index} out of range (found {len(devices)}). Retrying in {wait_time} seconds...")
                         time.sleep(wait_time)
                         continue
@@ -93,26 +109,26 @@ class CameraBasler:
                     self.camera.GainAuto.SetValue("Off")
                     self.camera.GainRaw.SetValue(int(self.gain))
 
-                logger.info(
+                self.logger.info(
                     f"Connected to: {info.GetModelName()} ({info.GetSerialNumber()})")
                 if self.packet_size > 0:
-                    logger.info(
+                    self.logger.info(
                         f"Packet size: {self.camera.GevSCPSPacketSize.GetValue()}")
                 break
 
             except (pylon.RuntimeException, genicam.RuntimeException) as e:
                 if self._should_log_error('runtime_error'):
-                    logger.error(
+                    self.logger.error(
                         f"Camera connection error: {str(e)}. Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
 
         # Exposure setup
         if self.exposure_us > 0:
             try:
-                logger.info(f"  exposure: {self.exposure_us}")
+                self.logger.info(f"  exposure: {self.exposure_us}")
                 self._set_exposure(self.exposure_us)
             except Exception as e:
-                logger.warning(f"Failed to set exposure: {str(e)}")
+                self.logger.warning(f"Failed to set exposure: {str(e)}")
 
     def is_open(self) -> bool:
         return self.camera is not None and self.camera.IsOpen()
@@ -162,20 +178,20 @@ class CameraBasler:
                     node.SetValue(int(exp))
                     if self.log_exposure_changes:
                         if exp != exposure_us:
-                            logger.info(
+                            self.logger.info(
                                 f"Exposure snapped to grid: min={exp_min} inc={inc} → {exp} µs")
                         else:
-                            logger.info(f"Exposure set to {exp} µs")
+                            self.logger.info(f"Exposure set to {exp} µs")
                     self.exposure_us = exp
                 else:
-                    logger.warning(
+                    self.logger.warning(
                         "ExposureTimeRaw not writable (check grabbing state / auto modes).")
 
                 return
 
             except Exception as e:
                 if self._should_log_error(f'set_exposure_{exposure_us}'):
-                    logger.error(f"Failed to set exposure: {str(e)}")
+                    self.logger.error(f"Failed to set exposure: {str(e)}")
 
         logging.warning(
             "Exposure set timeout expired. Exposure may not be set correctly.")
@@ -197,32 +213,35 @@ class CameraBasler:
                 pass
 
         except (pylon.RuntimeException, genicam.RuntimeException) as e:
-            logger.debug(f"Camera health check failed (pylon/genicam): {e}")
+            self.logger.debug(f"Camera health check failed (pylon/genicam): {e}")
             ok = False
         except Exception as e:
-            logger.debug(f"Camera health check failed (unexpected): {e}")
+            self.logger.debug(f"Camera health check failed (unexpected): {e}")
             ok = False
 
         return bool(ok)
 
-    def capture_image(self):
-        """Grab a frame and return it as a NumPy array."""
-        img = None
+    def _grab_one(self):
         try:
-            t = time.time()
             if not self.camera.IsOpen():
                 self.camera.Open()
             result = self.camera.GrabOne(10001)
-            #self.camera.Close()
-            #print(time.time() - t, flush=True)
             if result.GrabSucceeded():
-                img = result.GetArray()
-                print("PixelFormat:", self.camera.PixelFormat.GetValue(), flush=True)
-                print("PixelType:", result.GetPixelType(), flush=True)
-                print("Array:", img.shape, img.dtype, flush=True)
+                return result
+            self.logger.error(f"Failed to capture image (grab not succeeded)")
+
         except Exception as e:
-            logger.error(f"Failed to capture image: {str(e)}")
-        return img
+            self.logger.error(f"Failed to capture image: {str(e)}")
+
+        return None
+
+    def capture_image(self):
+        """Grab a frame and return it as a NumPy array."""
+        result = self._grab_one()
+        if result is not None:
+            return result.GetArray()
+        else:
+            return None
 
     # Class variable to track last error log time
     _last_error_log = {}

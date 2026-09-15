@@ -95,7 +95,8 @@ class Camera(Node):
             self.cam = CameraBasler(serial_number=serial_number,
                                     exposure_us=exposure_us,
                                     packet_size=self.params.camera.packet_size,
-                                    gain=self.params.camera.gain)
+                                    gain=self.params.camera.gain,
+                                    logger=self.get_logger())
 
             self.get_logger().info(
                 "Camera initialized:\n" +
