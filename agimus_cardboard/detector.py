@@ -163,6 +163,8 @@ class Detector(Node):
                 ),
             )
 
+        self.last_holder_trn = None
+
         # debug publisher for markers for holes
         self._hole_marker_publisher = self.create_publisher(
             MarkerArray,
@@ -288,10 +290,10 @@ class Detector(Node):
             holder_trn = crb.detect_holder(self.img_u)
 
             if holder_trn is not None:
+                self.last_holder_trn = holder_trn
+
                 part_lines, part_ids, part_filled = crb.holder_parts(self.img_u,
                                                                      holder_trn)
-                self.img_u = crb.holder_remove(self.img_u, holder_trn)
-
                 msg, marker = self.holes_to_robot_space_msg_marker(
                     part_lines, part_ids, part_filled, marker_ns='holder_parts')
 
@@ -301,6 +303,9 @@ class Detector(Node):
 
         if self.template is None:
             return
+
+        if self.last_holder_trn is not None:
+            self.img_u = crb.holder_remove(self.img_u, self.last_holder_trn)
 
         t = time.time()
         seg, img_e, u = crb.detect_all_segments(self.img_u, self.opt, self.mask)
