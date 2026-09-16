@@ -211,8 +211,7 @@ class HoleInsertPlanner(HolePlannerBase):
 
             # move up, decrease weights
             self.send_one_point(p, angle_h, 'hole', "up", dz=dz_up)
-            self.send_one_point(p, angle_h, 'normal_weights', "up-",
-                                dz=dz_up)
+            self.send_one_point(p, angle_h, 'normal', "up-", dz=dz_up)
 
         # half-way back
         self.send_one_point(p_half, angle_half, 'normal', "half", dz=dz_up)
