@@ -287,7 +287,7 @@ class Detector(Node):
             self.mask = cv2.erode(self.mask, kernel, iterations=1)
 
         if self.detect_holder:
-            holder_trn = crb.detect_holder(self.img_u)
+            holder_trn = crb.detect_holder(self.img_u, self.opt)
 
             if holder_trn is not None:
                 self.last_holder_trn = holder_trn
@@ -300,6 +300,8 @@ class Detector(Node):
                 self._holder_part_marker_publisher.publish(marker)
                 self._holder_part_publisher.publish(msg)
                 self.get_logger().debug(f"Holder: {part_ids}")
+            else:
+                self.get_logger().warning("No holder detected")
 
         if self.template is None:
             return

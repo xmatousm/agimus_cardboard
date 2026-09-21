@@ -158,6 +158,12 @@ class Opt:
         'thr': 0.2,
     }
 
+    # detection of holder with aruco markers
+    holder = {
+        # original is 7, does not work well on de-mosaiced images that are
+        # slightly blurred
+        'aruco_adaptiveThreshConstant': 11
+    }
 
 class LineSegment:
     def __init__(self, u1, u2):
@@ -1122,11 +1128,17 @@ def icp_points_lines(seg_ref: list[LineSegment], u, rot, trn, opt: Opt):
     return rot, trn
 
 
-def detect_holder(img):
-    # parameters = cv2.aruco.DetectorParameters()
+def detect_holder(img, opt: Opt):
+    params = cv2.aruco.DetectorParameters_create()
+
+    for key, value in opt.holder.items():
+        if key.startswith('aruco_'):
+            setattr(params, key.removeprefix('aruco_'), value)
 
     corners, ids, rejected = aruco.detectMarkers(image=img,
-                                                 dictionary=holder_aruco_dict)
+                                                 dictionary=holder_aruco_dict,
+                                                 parameters=params)
+
     if ids is None:
         return None
     c1 = None
