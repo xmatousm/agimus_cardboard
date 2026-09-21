@@ -9,7 +9,6 @@ from sensor_msgs.msg import Image as MsgImage
 from agimus_cardboard.camera_parameters import camera_params
 import yaml
 import agimus_cardboard.crbtools as crb
-import geometry.all as g
 import numpy as np
 import cv2
 import cv_bridge
@@ -43,11 +42,6 @@ class Camera(Node):
 
         self.calib = crb.Calib.from_dict(calib_data)
         self.calib_u = self.calib.get_undistorted()
-
-        rot = g.a2r(self.calib.r_vec.flatten())
-        mat_h = self.calib_u.mat_k @ rot.T @ np.linalg.inv(self.calib_u.mat_k)
-        self.mat_h, self.new_w, self.new_h = crb.im_fit_h(mat_h, self.calib_u.w,
-                                                          self.calib_u.h)
 
         self.mask = None
 
