@@ -90,6 +90,9 @@ class HolePlannerBase(Node):
         self.param_listener = hole_planner_params.ParamListener(self)
         self.params = self.param_listener.get_params()
 
+        self.freeze_holes_working = self.params.freeze_holes
+        self.freeze_holes = False
+
         assert len(self.params.init_pose) == 3, "init pose length must be 3"
         self.init_pose = np.array(self.params.init_pose)
         self.ee_frame_name = self.params.ee_frame_name
@@ -153,11 +156,21 @@ class HolePlannerBase(Node):
                                            f'{robot_name}/trajectory_goal')
 
     def _holes_callback(self, topic, msg_in: Hole):
+        if self.freeze_holes:
+            save_filled = self._holes[topic][3]
+
         self._holes[topic] = [msg_in.id, msg_in.pose1, msg_in.pose2,
                               msg_in.filled]
+
+        if self.freeze_holes and len(self._holes[topic][0]):
+            self._holes[topic][3] = save_filled
+
         self.get_logger().debug(f'{topic} {self._holes[topic][0]}')
 
     def clean_holes(self, topic: Optional[str] = None):
+        if self.freeze_holes:
+            return
+
         if topic is None:
             for topic in self._holes:
                 self._holes[topic] = None
@@ -296,6 +309,7 @@ class HolePlannerBase(Node):
             if hole_sel is not None:
                 return hole_sel
             else:
+                self.get_logger().debug(f'Cleaning {topic}')
                 self.clean_holes(topic)
 
     def current_hole_ids(self, topic: str) -> list[int]:

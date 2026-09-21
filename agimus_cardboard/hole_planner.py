@@ -111,8 +111,12 @@ class HolePlanner(HolePlannerBase):
         self.read_select_hole('hole', filled=True, normalize_angle=True)
         ids = self.current_hole_ids('hole')
         print( ">>>", ids)
+
+        self.freeze_holes = self.freeze_holes_working
         for current_id in ids:
             self.process_one_hole(current_id)
+
+        self.freeze_holes = False
 
         self.publish_working_area('hole_finished')
 

@@ -10,6 +10,11 @@ hole_planner_params:
     default_value: 0.05
     description: "Point above the hole to be made."
 
+  freeze_holes:
+    type: bool
+    default_value: False
+    description: "Whether to freeze detections during hole processing."
+
   shake_part:
     type: double
     default_value: 0.00
