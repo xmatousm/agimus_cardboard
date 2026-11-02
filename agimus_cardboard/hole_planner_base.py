@@ -157,6 +157,7 @@ class HolePlannerBase(Node):
 
     def _holes_callback(self, topic, msg_in: Hole):
         if self.freeze_holes:
+            self.get_logger().debug(f'{topic} (freeze previous) {self._holes[topic][0]} {self._holes[topic][3]}')
             save_filled = self._holes[topic][3]
 
         self._holes[topic] = [msg_in.id, msg_in.pose1, msg_in.pose2,
@@ -165,7 +166,7 @@ class HolePlannerBase(Node):
         if self.freeze_holes and len(self._holes[topic][0]):
             self._holes[topic][3] = save_filled
 
-        self.get_logger().debug(f'{topic} {self._holes[topic][0]}')
+        self.get_logger().debug(f'{topic} {self._holes[topic][0]} {self._holes[topic][3]}')
 
     def clean_holes(self, topic: Optional[str] = None):
         if self.freeze_holes:
@@ -280,6 +281,8 @@ class HolePlannerBase(Node):
             if self._in_range(hs.u1, hs.angle) and self._in_range(hs.u2,
                                                                   hs.angle):
                 return hs
+            self.get_logger().warning(f'Hole selected but not in range')
+
 
         return None
 
@@ -288,12 +291,19 @@ class HolePlannerBase(Node):
                                   ) -> Optional[HoleSelected]:
 
         # waits for the message, returns selected hole or none
+        waited = False
         while self._holes[topic] is None:
-            self.get_logger().warning(f'Waiting for a {topic}')
+            waited = True
+            self.get_logger().warning(
+                f'Waiting for a {topic}, id:{hole_id}, filled: {filled}')
             rclpy.spin_once(self)
+
+        if waited:
+            self.get_logger().warning(f'{topic} {self._holes[topic][0]} {self._holes[topic][3]}')
 
         hole_sel = self._select_hole(topic, filled=filled, hole_id=hole_id,
                                      normalize_angle=normalize_angle)
+        self.get_logger().debug(f'Selected: {hole_sel}')
 
         return hole_sel
 

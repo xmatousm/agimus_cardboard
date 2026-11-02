@@ -122,7 +122,7 @@ class HoleInsertPlanner(HolePlannerBase):
 
         if self.params.shake_part != 0.0:
             if x > self.params.shake_part_threshold:
-                self.get_logger().info('Shaking')
+                self.get_logger().info(f'Shaking {x} > {self.params.shake_part_threshold}')
                 g = self.one_shake(
                     pu, angle,
                     dz=-self.params.dz_part - self.params.push_part,
