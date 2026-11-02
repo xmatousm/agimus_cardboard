@@ -1,0 +1,387 @@
+"""FreeCAD macro to export a laser-cutter/engraver SVG from a cardboard template.
+
+Output layers (the cutter software keys off stroke colour):
+  * cut     -> #FF0000 red : every non-construction edge of the object labelled 'Sketch'
+              (the master cut profile: outline + slots), MIRRORED left<->right because
+              parts are cut backside-up.
+  * engrave -> #0000FF blue: the document's file name rendered as single-stroke text
+              (Relief SingleLine CAD stick font) tiled as a 3-line branding ribbon that
+              spans the full part width, each line shifted left, trimmed at the part edges.
+
+Text is rendered directly from the TTF outlines with fontTools: each glyph contour is
+drawn WITHOUT its implicit closing segment, which turns the font's implicitly-closed
+single-line contours into true open strokes (no spurious 'closing chords'). Genuine round
+contours (o, 0, bowls that meet themselves) stay closed.
+
+Run interactively on the active document, or headless:
+    freecadcmd SketchToLaserSVG.FCMacro <file>.FCStd
+Writes <file>.svg next to the source document.
+"""
+import FreeCAD as App
+import os.path
+import sys
+import math
+
+from fontTools.ttLib import TTFont
+from fontTools.pens.recordingPen import DecomposingRecordingPen
+from fontTools.pens.basePen import decomposeQuadraticSegment
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+SOURCE_LABEL = "Sketch"          # object holding the master cut geometry
+FONT_REL = os.path.join("fonts", "ReliefSingleLine-Regular.ttf")
+TEXT_HEIGHT = 7.5                 # target cap height of engraved text [mm]
+N_LINES = 3                       # branding ribbon: number of stacked lines
+LINE_PITCH = 1.5 * TEXT_HEIGHT    # vertical distance between baselines [mm]
+SEPARATOR = "  //  "              # gap between repeated labels along one line
+SHIFT_TEXT = "//"                 # each successive line shifts LEFT by this text's width
+                                  # (makes the separator slashes appear to carry over)
+CUT_COLOR = "#FF0000"
+ENGRAVE_COLOR = "#0000FF"
+STROKE_MM = 0.1                   # hairline
+CUT_DEFLECTION = 0.05             # cut-edge discretisation tolerance [mm]
+CURVE_STEPS = 12                  # segments per glyph bezier
+
+
+# ---------------------------------------------------------------------------
+# Document helpers
+# ---------------------------------------------------------------------------
+def get_by_label(doc, label):
+    """Get the first document object whose Label matches exactly."""
+    for o in doc.Objects:
+        if o.Label == label:
+            return o
+    return None
+
+
+def macro_dir():
+    """Directory that contains this macro (for locating bundled fonts)."""
+    try:
+        return os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        return os.getcwd()
+
+
+def find_font():
+    """Locate the stick font relative to the macro, with sensible fallbacks."""
+    candidates = [
+        os.path.join(macro_dir(), FONT_REL),
+        os.path.join(os.getcwd(), FONT_REL),
+        os.path.join("/home/patrik/CIIRC/agimus_cardboard/templates", FONT_REL),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    raise Exception(f"Stick font not found; looked in: {candidates}")
+
+
+def edge_points(edge):
+    """Discretise a Part edge to an ordered list of (x, y) points."""
+    try:
+        pts = edge.discretize(Deflection=CUT_DEFLECTION)
+    except Exception:
+        pts = edge.discretize(2)
+    return [(p.x, p.y) for p in pts]
+
+
+# ---------------------------------------------------------------------------
+# Single-stroke text rendering (fontTools; implicit close dropped)
+# ---------------------------------------------------------------------------
+class StickFont:
+    """Render single-stroke text from a TTF, dropping each contour's closing chord."""
+
+    def __init__(self, path, cap_height_mm):
+        self.font = TTFont(path)
+        self.upm = self.font["head"].unitsPerEm
+        self.cmap = self.font.getBestCmap()
+        self.gs = self.font.getGlyphSet()
+        self.hmtx = self.font["hmtx"]
+        cap = getattr(self.font.get("OS/2"), "sCapHeight", 0) or 0
+        if not cap:  # fall back to 'H' bbox if the font lacks the metric
+            cap = self._glyph_ymax("H") or (0.7 * self.upm)
+        self.scale = cap_height_mm / cap
+
+    def _glyph_ymax(self, ch):
+        cs, _ = self._contours_raw(ch)
+        ys = [p[1] for c in cs for p in c]
+        return max(ys) if ys else 0
+
+    def _contours_raw(self, ch):
+        """Open contours (font units) + advance (font units) for one character."""
+        gn = self.cmap.get(ord(ch))
+        if gn is None:
+            return [], int(0.3 * self.upm)
+        # DecomposingRecordingPen resolves composite glyphs (e.g. 'nine' built as a
+        # rotated component of 'six') into real contours; a plain RecordingPen would
+        # emit only 'addComponent' and the glyph would render as nothing.
+        pen = DecomposingRecordingPen(self.gs)
+        self.gs[gn].draw(pen)
+        contours, cur, cp = [], [], None
+        for cmd, a in pen.value:
+            if cmd == "moveTo":
+                if cur:
+                    contours.append(cur)
+                cp = a[0]
+                cur = [cp]
+            elif cmd == "lineTo":
+                cp = a[0]
+                cur.append(cp)
+            elif cmd == "qCurveTo":
+                pts = list(a)
+                if pts[-1] is None:          # all-off-curve contour -> close on start
+                    pts[-1] = cur[0]
+                for off, on in decomposeQuadraticSegment(pts):
+                    cur.extend(self._quad(cp, off, on))
+                    cp = on
+            elif cmd == "curveTo":           # cubic (rare in TTF)
+                c1, c2, end = a[-3], a[-2], a[-1]
+                cur.extend(self._cubic(cp, c1, c2, end))
+                cp = end
+            elif cmd in ("closePath", "endPath"):
+                # DROP the implicit closing chord -> true open stroke
+                if cur:
+                    contours.append(cur)
+                cur, cp = [], None
+        if cur:
+            contours.append(cur)
+        return contours, self.hmtx[gn][0]
+
+    def _quad(self, p0, c, p1):
+        n = CURVE_STEPS
+        return [((1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * c[0] + t * t * p1[0],
+                 (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * c[1] + t * t * p1[1])
+                for t in (i / n for i in range(1, n + 1))]
+
+    def _cubic(self, p0, c1, c2, p1):
+        n = CURVE_STEPS
+        out = []
+        for i in range(1, n + 1):
+            t = i / n
+            m = 1 - t
+            out.append((m**3 * p0[0] + 3*m*m*t*c1[0] + 3*m*t*t*c2[0] + t**3*p1[0],
+                        m**3 * p0[1] + 3*m*m*t*c1[1] + 3*m*t*t*c2[1] + t**3*p1[1]))
+        return out
+
+    def advance(self, ch):
+        """Advance width of one character [mm]."""
+        gn = self.cmap.get(ord(ch))
+        w = self.hmtx[gn][0] if gn is not None else int(0.3 * self.upm)
+        return w * self.scale
+
+    def text_width(self, s):
+        return sum(self.advance(c) for c in s)
+
+    def layout(self, s, x0=0.0):
+        """Polylines (mm, baseline-relative, y-up) for a string starting at x0."""
+        x = x0
+        out = []
+        for ch in s:
+            cs, adv = self._contours_raw(ch)
+            for c in cs:
+                out.append([(x + px * self.scale, py * self.scale) for (px, py) in c])
+            x += adv * self.scale
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Clipping to the part outline
+# ---------------------------------------------------------------------------
+CLIP_STEP = 0.3   # densify text before the inside-test [mm] (trim edge resolution)
+
+
+def outline_polygon(doc, sketch_obj, tf):
+    """Ordered points of the part's OUTER outline, in final SVG coords (via tf).
+
+    Prefers the object labelled 'Outline'; otherwise takes the largest wire of the
+    source sketch. Returns a closed ring of (x, y) points, or None.
+    """
+    wire = None
+    for candidate in (get_by_label(doc, "Outline"), sketch_obj):
+        if candidate is None:
+            continue
+        shp = getattr(candidate, "Shape", None)
+        if shp is None or shp.isNull() or not shp.Wires:
+            continue
+        wire = max(shp.Wires, key=lambda w: w.BoundBox.DiagonalLength)
+        break
+    if wire is None:
+        return None
+    # A closed wire's edges are not guaranteed to be returned in a connected,
+    # consistently-oriented order, so concatenating them blindly yields a
+    # self-crossing ring that breaks the point-in-polygon test. Discretise the
+    # whole wire (traversal order); fall back to chaining edges by shared endpoints.
+    try:
+        pts = [tf(p.x, p.y) for p in wire.discretize(Deflection=0.1)]
+        if len(pts) >= 3:
+            return pts
+    except Exception:
+        pass
+    segs = [[(p.x, p.y) for p in e.discretize(Deflection=0.1)] for e in wire.Edges]
+    ring = segs.pop(0)
+    d2 = lambda a, b: (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
+    while segs:
+        end = ring[-1]
+        bi, rev, best = 0, False, 1e18
+        for i, s in enumerate(segs):
+            for r, pt in ((False, s[0]), (True, s[-1])):
+                dd = d2(end, pt)
+                if dd < best:
+                    best, bi, rev = dd, i, r
+        s = segs.pop(bi)
+        if rev:
+            s = s[::-1]
+        ring.extend(s[1:])
+    return [tf(x, y) for (x, y) in ring]
+
+
+def point_in_poly(pt, poly):
+    """Ray-casting point-in-polygon test."""
+    x, y = pt
+    inside = False
+    n = len(poly)
+    j = n - 1
+    for i in range(n):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def clip_to_polygon(polyline, poly):
+    """Keep only the parts of a polyline that lie inside poly (densified trim)."""
+    dens = []
+    for i in range(len(polyline) - 1):
+        p, q = polyline[i], polyline[i + 1]
+        d = math.hypot(q[0] - p[0], q[1] - p[1])
+        steps = max(1, int(d / CLIP_STEP))
+        for k in range(steps):
+            t = k / steps
+            dens.append((p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t))
+    dens.append(polyline[-1])
+
+    out, cur = [], []
+    for pt in dens:
+        if point_in_poly(pt, poly):
+            cur.append(pt)
+        else:
+            if len(cur) >= 2:
+                out.append(cur)
+            cur = []
+    if len(cur) >= 2:
+        out.append(cur)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Branding ribbon
+# ---------------------------------------------------------------------------
+def build_ribbon(font, label, width, height, outline):
+    """3-line ribbon of the repeated label, shifted left per line, clipped to outline.
+
+    Returns polylines in final SVG coords (mm, y-down).
+    """
+    unit = label + SEPARATOR
+    unit_w = font.text_width(unit)
+    shift = font.text_width(SHIFT_TEXT)
+
+    band = (N_LINES - 1) * LINE_PITCH + TEXT_HEIGHT
+    baseline0 = (height - band) / 2.0 + TEXT_HEIGHT
+
+    polylines = []
+    for i in range(N_LINES):
+        x0 = -(i * shift)
+        span = width - x0                       # must cover from x0 up to width
+        repeats = int(math.ceil(span / max(unit_w, 1e-6))) + 1
+        ribbon = unit * repeats
+        baseline = baseline0 + i * LINE_PITCH   # y-down: successive lines go down
+        for pl in font.layout(ribbon, x0):
+            svg_pl = [(x, baseline - y) for (x, y) in pl]   # readable (flip glyph y)
+            polylines.extend(clip_to_polygon(svg_pl, outline))
+    return polylines
+
+
+# ---------------------------------------------------------------------------
+# SVG emission
+# ---------------------------------------------------------------------------
+def fmt_pts(pts):
+    return " ".join(f"{x:.3f},{y:.3f}" for (x, y) in pts)
+
+
+def main(doc):
+    font_path = find_font()
+
+    obj = get_by_label(doc, SOURCE_LABEL)
+    if obj is None:
+        raise Exception(f"No object labelled '{SOURCE_LABEL}'.")
+    # Guard against a stale cached Shape (a file saved without a final recompute
+    # can store out-of-date geometry); force it to match the current sketch.
+    obj.touch()
+    doc.recompute()
+    if not hasattr(obj, "Shape") or obj.Shape is None or obj.Shape.isNull():
+        raise Exception(f"Object '{SOURCE_LABEL}' has no shape (edges) to export.")
+
+    # --- cut geometry (Shape excludes construction geometry) ---
+    cut_raw = [edge_points(e) for e in obj.Shape.Edges]
+    bb = obj.Shape.BoundBox
+    minX, minY, maxX, maxY = bb.XMin, bb.YMin, bb.XMax, bb.YMax
+    W, H = maxX - minX, maxY - minY
+
+    # mirror-X (backside) + Y-flip (FreeCAD y-up -> SVG y-down)
+    tf = lambda x, y: (maxX - x, maxY - y)
+    cut_pls = [[tf(x, y) for (x, y) in pl] for pl in cut_raw]
+
+    # --- engraving ribbon (clipped to the mirrored part outline) ---
+    outline = outline_polygon(doc, obj, tf)
+    if outline is None:
+        raise Exception("Could not determine the part outline for clipping.")
+    font = StickFont(font_path, TEXT_HEIGHT)
+    label = os.path.splitext(os.path.basename(doc.FileName))[0]
+    text_pls = build_ribbon(font, label, W, H, outline)
+
+    # --- write SVG (1 user unit = 1 mm) ---
+    out = []
+    out.append('<?xml version="1.0" encoding="UTF-8"?>')
+    out.append(f'<svg xmlns="http://www.w3.org/2000/svg" '
+               f'width="{W:.3f}mm" height="{H:.3f}mm" viewBox="0 0 {W:.3f} {H:.3f}">')
+    out.append(f'  <g id="cut" fill="none" stroke="{CUT_COLOR}" stroke-width="{STROKE_MM}" '
+               f'stroke-linecap="round" stroke-linejoin="round">')
+    for pl in cut_pls:
+        out.append(f'    <polyline points="{fmt_pts(pl)}"/>')
+    out.append('  </g>')
+    out.append(f'  <g id="engrave" fill="none" stroke="{ENGRAVE_COLOR}" stroke-width="{STROKE_MM}" '
+               f'stroke-linecap="round" stroke-linejoin="round">')
+    for pl in text_pls:
+        out.append(f'    <polyline points="{fmt_pts(pl)}"/>')
+    out.append('  </g>')
+    out.append('</svg>')
+
+    out_file = os.path.splitext(doc.FileName)[0] + ".svg"
+    with open(out_file, "w") as fh:
+        fh.write("\n".join(out) + "\n")
+
+    print(f"Exported {len(cut_pls)} cut paths and {len(text_pls)} engrave paths "
+          f"({W:.1f} x {H:.1f} mm) to {out_file}")
+
+
+# ---------------------------------------------------------------------------
+# Entry point (active document, or batch: freecadcmd <macro> <file>.FCStd)
+# ---------------------------------------------------------------------------
+doc_ = App.ActiveDocument
+batch = False
+
+if doc_ is None:
+    file = sys.argv[-1]
+    if not file.endswith(".FCStd"):
+        raise Exception(
+            "No active document and the last argument is not a .FCStd file.")
+    doc_ = App.openDocument(file)
+    batch = True
+
+main(doc_)
+
+if batch:
+    App.closeDocument(doc_.Name)
+    sys.exit(0)
