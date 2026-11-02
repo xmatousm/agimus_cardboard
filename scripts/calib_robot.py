@@ -22,11 +22,11 @@ plt.close('all')
 img_file = data_base + 'calib/calib_robot_1.png'
 calib_file = data_base + 'calib/calib_cam_1.yaml'
 
-# img_file = 'data/calib/calib_robot_2.png'
-# calib_file = 'data/calib/calib_cam_2.yaml'
+# img_file = data_base + 'calib/calib_robot_2.png'
+# calib_file = data_base + 'calib/calib_cam_2.yaml'
 
 # points in the robot coordinate frame
-x = np.array([[0.45, 0.45, 0.70, 0.70],
+x = np.array([[0.45, 0.45, 0.65, 0.65],
               [0.25, -0.25, -0.25, 0.25],
               [0.095, 0.095, 0.095, 0.095]])
 
@@ -110,5 +110,5 @@ calib_robot = {
     'scale': float(scale),
 }
 
-with open('calib_robot.yaml', 'w') as fh:
+with open(img_file + '_calib_robot.yaml', 'w') as fh:
     yaml.safe_dump(calib_robot, fh)
