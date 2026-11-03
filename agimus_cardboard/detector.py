@@ -278,37 +278,31 @@ class Detector(Node):
 
         return msg, marker_array
 
-    def image_process(self):
-        self.get_logger().debug(f"Processing")
+    def do_detect_holder(self):
+        t = time.time()
+        holder_trn = crb.detect_holder(self.img_u, self.opt)
 
-        if self.mask is None:
-            self.mask = (self.img_u > 0).astype(np.uint8)
-            kernel = np.ones((5, 5), np.uint8)
-            self.mask = cv2.erode(self.mask, kernel, iterations=1)
+        if holder_trn is not None:
+            self.last_holder_trn = holder_trn
 
-        if self.detect_holder:
-            holder_trn = crb.detect_holder(self.img_u, self.opt)
+            part_lines, part_ids, part_filled = crb.holder_parts(self.img_u,
+                                                                 holder_trn)
+            msg, marker = self.holes_to_robot_space_msg_marker(
+                part_lines, part_ids, part_filled, marker_ns='holder_parts')
 
-            if holder_trn is not None:
-                self.last_holder_trn = holder_trn
+            self._holder_part_marker_publisher.publish(marker)
+            self._holder_part_publisher.publish(msg)
+            t1 = time.time() - t
 
-                part_lines, part_ids, part_filled = crb.holder_parts(self.img_u,
-                                                                     holder_trn)
-                msg, marker = self.holes_to_robot_space_msg_marker(
-                    part_lines, part_ids, part_filled, marker_ns='holder_parts')
+            self.get_logger().debug(f"Holder [{t1:.2f} s]: {part_ids}")
 
-                self._holder_part_marker_publisher.publish(marker)
-                self._holder_part_publisher.publish(msg)
-                self.get_logger().debug(f"Holder: {part_ids}")
-            else:
-                self.get_logger().warning("No holder detected")
-
-        if self.template is None:
-            return
+        else:
+            self.get_logger().warning("No holder detected")
 
         if self.last_holder_trn is not None:
             self.img_u = crb.holder_remove(self.img_u, self.last_holder_trn)
 
+    def do_detect_template(self):
         t = time.time()
         seg, img_e, u = crb.detect_all_segments(self.img_u, self.opt, self.mask)
         t1 = time.time() - t
@@ -389,8 +383,6 @@ class Detector(Node):
             self.get_logger().debug(
                 f"Publish: {len(seg)} segments [{t1:.2f} s]")
 
-        self.get_logger().debug(f"")
-
         if self.is_debug:
             self.plt.figure(3)
             self.plt.clf()
@@ -403,6 +395,22 @@ class Detector(Node):
             # redraw figures
             self.plt.gcf().canvas.draw_idle()
             self.plt.gcf().canvas.start_event_loop(0.01)
+
+    def image_process(self):
+        self.get_logger().debug(f"Processing")
+
+        if self.mask is None:
+            self.mask = (self.img_u > 0).astype(np.uint8)
+            kernel = np.ones((5, 5), np.uint8)
+            self.mask = cv2.erode(self.mask, kernel, iterations=1)
+
+        if self.detect_holder:
+            self.do_detect_holder()
+
+        if self.template is not None:
+            self.do_detect_template()
+
+        self.get_logger().debug(f"")
 
 
 def main(args=None):
