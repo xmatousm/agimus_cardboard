@@ -13,12 +13,13 @@ import \
 
 
 class HoleInsertPlanner(HolePlannerBase):
-    """"""
+    """
+    mode:  'full' - full demo, grabbing parts and inserting into cardboard
+           'holes' - navigation to holes with opened gripper to check accuracy
+           'parts' - parts are grabbed from holder and moved away, no cardboard
+    """
 
     def __init__(self, robot_name: str, mode: str = 'full'):
-        # only_holes = True - no parts are grabbed, only navigate to holes
-        # to check for accuracy
-
         super().__init__("hole_insert_planner", robot_name,
                          ['hole', 'holder_part'])
 
@@ -31,16 +32,16 @@ class HoleInsertPlanner(HolePlannerBase):
         self.area_color['part_process'] = (0.0, 0.0, 1.0)
         self.area_color['finished'] = (0.5, 0.5, 0.5)
 
+        self.check_grab = self.params.check_grab
         self.dump_area = None
         self.gripper_future = None
         self.gripper_state = True
 
-        # gripper test
-        self.gripper(False)
+        # gripper test, finish in open state
         self.gripper(True)
+        self.gripper(False)
 
-        if self.mode == 'holes':
-            self.gripper(False)
+        assert self.mode in ('full', 'parts', 'holes')
 
         self.get_logger().info(f"Mode: {self.mode}")
         self.seg_shake = ShakeInsert(self.ee_frame_name)
@@ -176,7 +177,7 @@ class HoleInsertPlanner(HolePlannerBase):
         # move above the hole beginning
         self.send_one_point(p, angle_h, 'normal', "up-", dz=dz_up)
 
-        if self.mode == 'holes':
+        if self.mode == 'holes' or not self.check_grab:
             part_sel.filled = False
         else:
             # check if the part is not there (and clean parts for the next run)

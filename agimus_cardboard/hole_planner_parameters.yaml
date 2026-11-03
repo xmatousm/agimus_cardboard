@@ -40,6 +40,11 @@ hole_planner_params:
     default_value: 0.00
     description: "Additional move down to push when inserting a part."
 
+  check_grab:
+    type: bool
+    default_value: True
+    description: "Whether to visually check in the holder if a part was grabbed."
+
   shake_hole:
     type: double
     default_value: 0.00
