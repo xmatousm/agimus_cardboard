@@ -201,10 +201,18 @@ class HoleInsertPlanner(HolePlannerBase):
                                 dz=-self.params.dz_hole - self.params.push_hole)
 
             if self.params.shake_hole != 0.0:
-                g = self.one_shake(p, angle_h, dz=-self.params.dz_hole,
-                                   amount=self.params.shake_hole,
-                                   duration=self.params.shake_duration_hole)
-                self.send_point(g, "dn_shake")
+                if x > self.params.shake_hole_threshold:
+                    self.get_logger().info(
+                        f'Shaking {x} > {self.params.shake_hole_threshold}')
+
+                    g = self.one_shake(p, angle_h, dz=-self.params.dz_hole,
+                                       amount=self.params.shake_hole,
+                                       duration=self.params.shake_duration_hole)
+                    self.send_point(g, "dn_shake")
+
+                else:
+                    self.get_logger().info(
+                        f'Shake not needed {x} < {self.params.shake_hole_threshold}')
 
             if not self.mode == 'holes':
                 # release
