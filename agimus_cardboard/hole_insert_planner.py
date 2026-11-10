@@ -35,7 +35,7 @@ class HoleInsertPlanner(HolePlannerBase):
         self.check_grab = self.params.check_grab
         self.dump_area = None
         self.gripper_future = None
-        self.gripper_state = True
+        self.gripper_state = False
 
         # gripper test, finish in open state
         self.gripper(True)
