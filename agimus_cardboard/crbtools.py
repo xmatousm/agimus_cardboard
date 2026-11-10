@@ -112,7 +112,7 @@ class Opt:
         'max_gap': 10,
         'min_length': 150,
         # minimum length updated as a ratio of minimal template segment
-        'min_length_rel': 0.8,
+        'min_length_rel': 0.6,
         # maximum count of line segments
         'max_segments': 30,
     }
@@ -162,7 +162,7 @@ class Opt:
     holder = {
         # original is 7, does not work well on de-mosaiced images that are
         # slightly blurred
-        'aruco_adaptiveThreshConstant': 11
+        'aruco_adaptiveThreshConstant': 17
     }
 
 class LineSegment:
